@@ -1,0 +1,349 @@
+"""Gradio version of the exhibition data analysis assistant.
+
+Run locally:
+    python -m pip install -r requirements.txt
+    python gradio_app.py
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import io
+import json
+import mimetypes
+import os
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import gradio as gr
+import pandas as pd
+from google import genai
+from google.genai import types
+
+
+MODEL_OPTIONS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
+)
+MAX_CONTEXT_CHARS = 60_000
+HISTORY_SCHEMA_VERSION = 1
+
+
+def new_session() -> dict[str, Any]:
+    return {
+        "dataframe": None,
+        "source_filename": None,
+        "messages": [],
+    }
+
+
+def clone_session(session: dict[str, Any] | None) -> dict[str, Any]:
+    return session if isinstance(session, dict) else new_session()
+
+
+def read_table(file_path: str) -> pd.DataFrame:
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        last_error = None
+        for encoding in ("utf-8-sig", "cp949", "utf-8"):
+            try:
+                return pd.read_csv(path, encoding=encoding)
+            except UnicodeDecodeError as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+    if suffix in {".xlsx", ".xls"}:
+        return pd.read_excel(path)
+    raise ValueError("CSV, XLSX 또는 XLS 파일만 데이터로 등록할 수 있습니다.")
+
+
+def load_dataset(file_path: str | None, session: dict[str, Any] | None):
+    session = clone_session(session)
+    if not file_path:
+        return session, None, "데이터 파일을 선택하세요."
+    try:
+        frame = read_table(file_path)
+        session["dataframe"] = frame.copy()
+        session["source_filename"] = Path(file_path).name
+        return (
+            session,
+            frame.head(20),
+            f"✅ 데이터 등록 완료: {Path(file_path).name} / {frame.shape[0]:,}행 × {frame.shape[1]:,}열",
+        )
+    except Exception as exc:
+        return session, None, f"❌ 데이터 등록 실패: {exc}"
+
+
+def make_data_context(frame: pd.DataFrame, source_filename: str) -> str:
+    describe = frame.describe(include="all").transpose().to_string()
+    context = f"""
+[분석 파일]
+{source_filename}
+
+[데이터 크기]
+{frame.shape}
+
+[컬럼 및 데이터 타입]
+{frame.dtypes.to_string()}
+
+[결측치]
+{frame.isnull().sum().to_string()}
+
+[기초 통계]
+{describe}
+
+[상위 5행]
+{frame.head(5).to_string()}
+""".strip()
+    return context[:MAX_CONTEXT_CHARS]
+
+
+def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
+    return f"""
+당신은 전시회 전문 데이터 분석 수석 컨설턴트입니다.
+아래 데이터 정보를 바탕으로 정확하고 실행 가능한 분석을 제공하세요.
+항상 한국어로 답하세요. 데이터에 없는 사실은 추측이라고 명시하세요.
+
+[응답 규칙]
+- 사용자가 요청한 결과만 간결하게 답하세요.
+- 실제 계산이 필요하면 현재 데이터프레임의 컬럼에 맞는 Python 코드를 제공하세요.
+- 이 Gradio 테스트 앱은 모델이 작성한 코드를 자동 실행하지 않습니다.
+- 데이터에 없는 숫자를 계산된 사실처럼 만들지 마세요.
+
+{make_data_context(frame, source_filename)}
+""".strip()
+
+
+def content_history(messages: list[dict[str, Any]]) -> list[types.Content]:
+    history = []
+    for message in messages:
+        text = str(message.get("content", "")).strip()
+        if not text:
+            continue
+        role = "model" if message.get("role") == "assistant" else "user"
+        history.append(types.Content(role=role, parts=[types.Part.from_text(text=text)]))
+    return history
+
+
+def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {"role": message["role"], "content": str(message.get("content", ""))}
+        for message in messages
+        if not message.get("hidden") and message.get("role") in {"user", "assistant"}
+    ]
+
+
+def ask_gemini(
+    question: str,
+    image_path: str | None,
+    model_name: str,
+    api_key_input: str,
+    session: dict[str, Any] | None,
+):
+    session = clone_session(session)
+    question = (question or "").strip()
+    frame = session.get("dataframe")
+    api_key = (api_key_input or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+
+    if not question:
+        return session, visible_history(session["messages"]), "질문을 입력하세요.", question, image_path
+    if not isinstance(frame, pd.DataFrame):
+        return session, visible_history(session["messages"]), "먼저 분석 데이터 파일을 등록하세요.", question, image_path
+    if not api_key:
+        return session, visible_history(session["messages"]), "Gemini API 키를 입력하거나 GEMINI_API_KEY를 설정하세요.", question, image_path
+
+    try:
+        client = genai.Client(api_key=api_key)
+        chat = client.chats.create(
+            model=model_name,
+            config=types.GenerateContentConfig(
+                system_instruction=make_system_prompt(
+                    frame, session.get("source_filename") or "uploaded data"
+                )
+            ),
+            history=content_history(session["messages"]),
+        )
+
+        parts = [types.Part.from_text(text=question)]
+        visible_question = question
+        if image_path:
+            image_bytes = Path(image_path).read_bytes()
+            mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+            parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+            visible_question += f"\n\n[첨부 이미지: {Path(image_path).name}]"
+
+        response = chat.send_message(parts)
+        answer = response.text or "(텍스트 응답 없음)"
+        session["messages"].extend(
+            [
+                {"role": "user", "content": visible_question},
+                {"role": "assistant", "content": answer},
+            ]
+        )
+        return session, visible_history(session["messages"]), "✅ 응답 완료", "", None
+    except Exception as exc:
+        return session, visible_history(session["messages"]), f"❌ Gemini 요청 실패: {exc}", question, image_path
+
+
+def decode_readable_file(content: bytes) -> str:
+    encodings = ["utf-8-sig", "cp949"]
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.insert(1, "utf-16")
+    for encoding in encodings:
+        try:
+            text = content.decode(encoding)
+            visible = sum(char.isprintable() or char in "\r\n\t" for char in text)
+            if "\x00" not in text and visible / max(len(text), 1) >= 0.9:
+                return text
+        except UnicodeError:
+            continue
+    raise ValueError("텍스트로 읽을 수 없는 파일입니다.")
+
+
+def normalize_saved_messages(data: Any) -> list[dict[str, Any]]:
+    history = data if isinstance(data, list) else data.get("history", data.get("messages", []))
+    normalized = []
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "model":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        if "content" in message:
+            text = str(message["content"])
+        else:
+            text = "\n".join(
+                str(part.get("data", ""))
+                for part in message.get("parts", [])
+                if part.get("type") == "text"
+            )
+        if text.strip():
+            normalized.append({"role": role, "content": text})
+    return normalized
+
+
+def register_previous_conversation(file_path: str | None, session: dict[str, Any] | None):
+    session = clone_session(session)
+    if not file_path:
+        return session, visible_history(session["messages"]), "기존 대화 파일을 선택하세요."
+    try:
+        path = Path(file_path)
+        text = decode_readable_file(path.read_bytes())
+        try:
+            data = json.loads(text)
+            restored = normalize_saved_messages(data)
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            restored = []
+
+        if restored:
+            session["messages"] = restored
+            status = f"✅ 기존 대화 {len(restored)}개 메시지 등록 완료"
+        else:
+            reference = text.strip()
+            if not reference:
+                raise ValueError("등록할 내용이 없는 빈 파일입니다.")
+            truncated = len(reference) > MAX_CONTEXT_CHARS
+            reference = reference[:MAX_CONTEXT_CHARS]
+            session["messages"] = [{
+                "role": "user",
+                "content": (
+                    f"[등록된 기존 대화 파일: {path.name}]\n"
+                    "다음은 이전 대화입니다. 후속 질문에 답할 때 참고하세요.\n\n"
+                    f"{reference}"
+                ),
+                "hidden": True,
+            }]
+            suffix = " (길이 제한으로 일부만 등록)" if truncated else ""
+            status = f"✅ 기존 대화 파일 등록 완료: {path.name}{suffix}"
+        return session, visible_history(session["messages"]), status
+    except Exception as exc:
+        return session, visible_history(session["messages"]), f"❌ 기존 대화 등록 실패: {exc}"
+
+
+def save_conversation(session: dict[str, Any] | None):
+    session = clone_session(session)
+    if not session["messages"]:
+        raise gr.Error("저장할 대화가 없습니다.")
+    payload = {
+        "schema_version": HISTORY_SCHEMA_VERSION,
+        "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "source_filename": session.get("source_filename"),
+        "messages": session["messages"],
+    }
+    output_dir = Path(tempfile.gettempdir()) / "exhibition_gradio_exports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"exhibition_chat_{dt.datetime.now():%Y%m%d_%H%M%S}.json"
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(output_path)
+
+
+def clear_display(session: dict[str, Any] | None):
+    session = clone_session(session)
+    return session, [], "출력만 지웠습니다. 대화 문맥은 유지됩니다."
+
+
+def start_new_conversation(session: dict[str, Any] | None):
+    session = clone_session(session)
+    session["messages"] = []
+    return session, [], "✅ 새 대화를 시작했습니다."
+
+
+with gr.Blocks(title="전시 데이터 분석") as demo:
+    gr.Markdown("# 전시 데이터 분석 · Gradio 테스트")
+    gr.Markdown("CSV/Excel 데이터를 등록한 뒤 Gemini에게 질문하세요. API 키는 저장되지 않습니다.")
+    session_state = gr.State(new_session)
+
+    with gr.Row():
+        model = gr.Dropdown(MODEL_OPTIONS, value=MODEL_OPTIONS[0], label="Gemini 모델")
+        api_key = gr.Textbox(
+            label="Gemini API 키",
+            type="password",
+            placeholder="입력하지 않으면 GEMINI_API_KEY 환경변수 사용",
+        )
+
+    with gr.Row():
+        dataset_file = gr.File(label="분석 데이터 등록", file_types=[".csv", ".xlsx", ".xls"], type="filepath")
+        previous_file = gr.File(label="기존대화 등록", type="filepath")
+
+    load_button = gr.Button("데이터 불러오기", variant="primary")
+    register_button = gr.Button("기존대화 불러오기")
+    preview = gr.Dataframe(label="데이터 미리보기", interactive=False)
+    chatbot = gr.Chatbot(label="분석 대화", height=500)
+    status = gr.Markdown("준비됨")
+
+    with gr.Row():
+        question = gr.Textbox(label="질문", placeholder="전시 데이터에 관한 질문을 입력하세요.", lines=3, scale=4)
+        image = gr.Image(label="이미지 첨부", type="filepath", scale=1)
+
+    with gr.Row():
+        send_button = gr.Button("질문 전송", variant="primary")
+        clear_button = gr.Button("출력 지우기")
+        new_button = gr.Button("새 대화")
+        save_button = gr.DownloadButton("대화 JSON 저장")
+
+    load_button.click(
+        load_dataset,
+        inputs=[dataset_file, session_state],
+        outputs=[session_state, preview, status],
+    )
+    register_button.click(
+        register_previous_conversation,
+        inputs=[previous_file, session_state],
+        outputs=[session_state, chatbot, status],
+    )
+    send_inputs = [question, image, model, api_key, session_state]
+    send_outputs = [session_state, chatbot, status, question, image]
+    send_button.click(ask_gemini, inputs=send_inputs, outputs=send_outputs)
+    question.submit(ask_gemini, inputs=send_inputs, outputs=send_outputs)
+    clear_button.click(clear_display, inputs=[session_state], outputs=[session_state, chatbot, status])
+    new_button.click(start_new_conversation, inputs=[session_state], outputs=[session_state, chatbot, status])
+    save_button.click(save_conversation, inputs=[session_state], outputs=[save_button])
+
+
+if __name__ == "__main__":
+    demo.launch(inbrowser=True)
