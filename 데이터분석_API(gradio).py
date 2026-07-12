@@ -2,7 +2,7 @@
 
 Run locally:
     python -m pip install -r requirements.txt
-    python gradio_app.py
+    python ".\\데이터분석_API(gradio).py"
 """
 
 from __future__ import annotations

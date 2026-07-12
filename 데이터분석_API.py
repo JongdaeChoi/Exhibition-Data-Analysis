@@ -1,4 +1,4 @@
-# Generated from 데이터분석_4_API(codex_refactored).ipynb
+# Generated from 데이터분석_API.ipynb
 # Edit the notebook as the source of truth; regenerate this file after notebook changes.
 
 # %% [notebook cell 1]
