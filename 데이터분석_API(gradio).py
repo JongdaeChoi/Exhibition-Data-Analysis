@@ -137,6 +137,31 @@ def content_history(messages: list[dict[str, Any]]) -> list[types.Content]:
     return history
 
 
+def table_for_gradio(value: pd.DataFrame | pd.Series) -> pd.DataFrame:
+    """Gradio가 숨기는 의미 있는 인덱스를 일반 열로 변환합니다."""
+    table = value.to_frame() if isinstance(value, pd.Series) else value.copy()
+    index = table.index
+    is_default_index = (
+        isinstance(index, pd.RangeIndex)
+        and index.name is None
+        and index.start == 0
+        and index.step == 1
+        and index.stop == len(table)
+    )
+    if is_default_index:
+        return table
+
+    existing_names = {str(column) for column in table.columns}
+    safe_names = []
+    for position, name in enumerate(index.names, 1):
+        candidate = str(name) if name is not None else f"index_{position}"
+        while candidate in existing_names or candidate in safe_names:
+            candidate += "_index"
+        safe_names.append(candidate)
+    table.index = table.index.set_names(safe_names)
+    return table.reset_index()
+
+
 def execute_python_blocks(answer: str, frame: pd.DataFrame):
     """제한된 분석 환경에서 모델의 Python 블록을 실행합니다."""
     blocks = re.findall(r"```python\s*(.*?)```", answer, flags=re.DOTALL | re.IGNORECASE)
@@ -243,9 +268,9 @@ def execute_python_blocks(answer: str, frame: pd.DataFrame):
     text_outputs = []
     for value in captured:
         if isinstance(value, pd.DataFrame):
-            result_table = value
+            result_table = table_for_gradio(value)
         elif isinstance(value, pd.Series):
-            result_table = value.to_frame()
+            result_table = table_for_gradio(value)
         else:
             text_outputs.append(str(value))
     printed = stdout.getvalue().strip()
