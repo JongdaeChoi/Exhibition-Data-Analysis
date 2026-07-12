@@ -130,8 +130,8 @@ def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
 - 사용자가 요청한 결과만 간결하게 답하세요.
 - 실제 계산이 필요하면 현재 데이터프레임의 컬럼에 맞는 Python 코드를 제공하세요.
 - 자동 실행 모드에서는 모델이 작성한 Python 코드가 제한된 분석 환경에서 실행될 수 있습니다.
-- 사용자가 지정한 컬럼명은 완전히 동일한 이름으로 사용하세요. 비슷한 컬럼으로 대체하지 마세요.
-- 특히 '스캔시간'과 '스캔시각'은 서로 다른 컬럼이므로 절대로 혼동하거나 교체하지 마세요.
+- 사용자가 지정한 컬럼명은 완전히 동일한 이름으로 사용하세요. 접두어가 같거나 의미가 비슷한 다른 컬럼으로 추정·대체하지 마세요.
+- 유사한 컬럼명이 여러 개면 제공된 정확한 컬럼명과 고유값 예시를 확인하고, 사용자가 명시한 컬럼만 사용하세요.
 - 데이터에 없는 숫자를 계산된 사실처럼 만들지 마세요.
 
 {make_data_context(frame, source_filename)}
@@ -367,6 +367,23 @@ def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return history
 
 
+def requested_column_names(question: str, columns) -> list[str]:
+    """겹치는 컬럼명은 가장 긴 정확한 일치부터 안전하게 추출합니다."""
+    occupied_spans: list[tuple[int, int]] = []
+    requested = []
+    for column in sorted((str(item) for item in columns), key=len, reverse=True):
+        matched = False
+        for match in re.finditer(re.escape(column), question):
+            span = match.span()
+            if any(span[0] >= start and span[1] <= end for start, end in occupied_spans):
+                continue
+            occupied_spans.append(span)
+            matched = True
+        if matched:
+            requested.append(column)
+    return requested
+
+
 def ask_gemini(
     question: str,
     image_path: str | None,
@@ -407,8 +424,8 @@ def ask_gemini(
 표·차트·집계·변환처럼 실제 계산이 필요한 요청이면 Python 코드 블록 하나만 반환하세요.
 요약·설명·해석 요청이면 코드를 작성하지 말고 요청한 설명만 답하세요.
 코드는 이미 존재하는 df_clean을 사용하세요. 파일·프로세스·네트워크 작업과 추가 import는 하지 마세요.
-사용자가 명시한 컬럼명은 철자까지 완전히 동일하게 사용하고 비슷한 컬럼으로 대체하지 마세요.
-'스캔시간'과 '스캔시각'은 서로 다른 컬럼이므로 절대로 혼동하지 마세요.
+사용자가 명시한 컬럼명은 철자까지 완전히 동일하게 사용하세요.
+접두어가 같거나 의미가 비슷한 다른 컬럼으로 추정·대체하지 마세요.
 결과는 result_df 같은 별도 변수에 저장하고 display()로 표시하세요.
 """
         parts = [types.Part.from_text(text=request_text)]
@@ -430,10 +447,7 @@ def ask_gemini(
         execution_summary, result_table, chart_paths = "", None, []
         if mode_name == "파이썬 코드 자동 실행":
             try:
-                required_columns = [
-                    str(column) for column in frame.columns
-                    if str(column) in question
-                ]
+                required_columns = requested_column_names(question, frame.columns)
                 updated_frame, execution_summary, result_table, chart_paths = execute_python_blocks(
                     answer, frame, required_columns=required_columns
                 )
