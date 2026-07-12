@@ -129,6 +129,8 @@ def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
 def content_history(messages: list[dict[str, Any]]) -> list[types.Content]:
     history = []
     for message in messages:
+        if message.get("include_in_context") is False:
+            continue
         text = str(message.get("content", "")).strip()
         if not text:
             continue
@@ -286,12 +288,28 @@ def execute_python_blocks(answer: str, frame: pd.DataFrame):
     return updated_frame, summary, result_table, chart_paths
 
 
-def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    return [
-        {"role": message["role"], "content": str(message.get("content", ""))}
-        for message in messages
-        if not message.get("hidden") and message.get("role") in {"user", "assistant"}
-    ]
+def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    history = []
+    for message in messages:
+        if message.get("hidden") or message.get("role") not in {"user", "assistant"}:
+            continue
+        kind = message.get("kind", "text")
+        if kind == "table":
+            content = gr.Dataframe(
+                value=message.get("content"),
+                label="실행 표 결과",
+                interactive=False,
+            )
+        elif kind == "chart":
+            content = gr.Image(
+                value=message.get("content"),
+                label="실행 차트 결과",
+                interactive=False,
+            )
+        else:
+            content = str(message.get("content", ""))
+        history.append({"role": message["role"], "content": content})
+    return history
 
 
 def ask_gemini(
@@ -308,11 +326,11 @@ def ask_gemini(
     api_key = (api_key_input or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
 
     if not question:
-        return session, visible_history(session["messages"]), "질문을 입력하세요.", question, image_path, "", None, []
+        return session, visible_history(session["messages"]), "질문을 입력하세요.", question, image_path
     if not isinstance(frame, pd.DataFrame):
-        return session, visible_history(session["messages"]), "먼저 분석 데이터 파일을 등록하세요.", question, image_path, "", None, []
+        return session, visible_history(session["messages"]), "먼저 분석 데이터 파일을 등록하세요.", question, image_path
     if not api_key:
-        return session, visible_history(session["messages"]), "Gemini API 키를 입력하거나 GEMINI_API_KEY를 설정하세요.", question, image_path, "", None, []
+        return session, visible_history(session["messages"]), "Gemini API 키를 입력하거나 GEMINI_API_KEY를 설정하세요.", question, image_path
 
     try:
         client = genai.Client(api_key=api_key)
@@ -361,15 +379,39 @@ def ask_gemini(
                 session["dataframe"] = updated_frame
                 if execution_summary.startswith("✅"):
                     session["messages"].append({
+                        "role": "assistant",
+                        "content": execution_summary,
+                        "include_in_context": False,
+                    })
+                    if result_table is not None:
+                        session["messages"].append({
+                            "role": "assistant",
+                            "content": result_table,
+                            "kind": "table",
+                            "include_in_context": False,
+                        })
+                    for chart_path in chart_paths:
+                        session["messages"].append({
+                            "role": "assistant",
+                            "content": chart_path,
+                            "kind": "chart",
+                            "include_in_context": False,
+                        })
+                    session["messages"].append({
                         "role": "user",
                         "content": f"[로컬 Python 실행 결과]\n{execution_summary}",
                         "hidden": True,
                     })
             except Exception as exc:
                 execution_summary = f"❌ Python 코드 실행 실패: {exc}"
-        return session, visible_history(session["messages"]), "✅ 응답 완료", "", None, execution_summary, result_table, chart_paths
+                session["messages"].append({
+                    "role": "assistant",
+                    "content": execution_summary,
+                    "include_in_context": False,
+                })
+        return session, visible_history(session["messages"]), "✅ 응답 완료", "", None
     except Exception as exc:
-        return session, visible_history(session["messages"]), f"❌ Gemini 요청 실패: {exc}", question, image_path, "", None, []
+        return session, visible_history(session["messages"]), f"❌ Gemini 요청 실패: {exc}", question, image_path
 
 
 def decode_readable_file(content: bytes) -> str:
@@ -457,7 +499,10 @@ def save_conversation(session: dict[str, Any] | None):
         "schema_version": HISTORY_SCHEMA_VERSION,
         "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source_filename": session.get("source_filename"),
-        "messages": session["messages"],
+        "messages": [
+            message for message in session["messages"]
+            if message.get("include_in_context") is not False
+        ],
     }
     output_dir = Path(tempfile.gettempdir()) / "exhibition_gradio_exports"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -500,9 +545,6 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
     preview = gr.Dataframe(label="데이터 미리보기", interactive=False)
     chatbot = gr.Chatbot(label="분석 대화", height=500)
     status = gr.Markdown("준비됨")
-    execution_status = gr.Markdown(label="Python 실행 결과")
-    execution_table = gr.Dataframe(label="실행 표 결과", interactive=False)
-    execution_charts = gr.Gallery(label="실행 차트 결과", columns=2, height="auto")
 
     with gr.Row():
         question = gr.Textbox(label="질문", placeholder="전시 데이터에 관한 질문을 입력하세요.", lines=3, scale=4)
@@ -525,10 +567,7 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
         outputs=[session_state, chatbot, status],
     )
     send_inputs = [question, image, model, mode, api_key, session_state]
-    send_outputs = [
-        session_state, chatbot, status, question, image,
-        execution_status, execution_table, execution_charts,
-    ]
+    send_outputs = [session_state, chatbot, status, question, image]
     send_button.click(ask_gemini, inputs=send_inputs, outputs=send_outputs)
     question.submit(ask_gemini, inputs=send_inputs, outputs=send_outputs)
     clear_button.click(clear_display, inputs=[session_state], outputs=[session_state, chatbot, status])
