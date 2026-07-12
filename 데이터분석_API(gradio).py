@@ -7,17 +7,25 @@ Run locally:
 
 from __future__ import annotations
 
+import ast
+import contextlib
 import datetime as dt
 import io
 import json
 import mimetypes
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import gradio as gr
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import seaborn as sns
 from google import genai
 from google.genai import types
 
@@ -29,6 +37,7 @@ MODEL_OPTIONS = (
 )
 MAX_CONTEXT_CHARS = 60_000
 HISTORY_SCHEMA_VERSION = 1
+MODE_OPTIONS = ("일반 분석", "파이썬 코드 자동 실행")
 
 
 def new_session() -> dict[str, Any]:
@@ -128,6 +137,130 @@ def content_history(messages: list[dict[str, Any]]) -> list[types.Content]:
     return history
 
 
+def execute_python_blocks(answer: str, frame: pd.DataFrame):
+    """제한된 분석 환경에서 모델의 Python 블록을 실행합니다."""
+    blocks = re.findall(r"```python\s*(.*?)```", answer, flags=re.DOTALL | re.IGNORECASE)
+    if not blocks:
+        return frame, "코드 블록이 없어 자동 실행하지 않았습니다.", None, []
+
+    captured: list[Any] = []
+    stdout = io.StringIO()
+    chart_paths: list[str] = []
+    output_dir = Path(tempfile.mkdtemp(prefix="exhibition_gradio_charts_"))
+
+    def capture_display(value: Any):
+        captured.append(value)
+
+    safe_builtins = {
+        "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
+        "enumerate": enumerate, "float": float, "int": int, "isinstance": isinstance,
+        "len": len, "list": list, "max": max, "min": min, "print": print,
+        "range": range, "round": round, "set": set, "sorted": sorted,
+        "str": str, "sum": sum, "tuple": tuple, "zip": zip,
+    }
+    namespace = {
+        "__builtins__": safe_builtins,
+        "df": frame.copy(deep=True),
+        "df_clean": frame,
+        "pd": pd,
+        "np": np,
+        "plt": plt,
+        "sns": sns,
+        "display": capture_display,
+    }
+    blocked_calls = {"open", "exec", "eval", "compile", "__import__", "input", "breakpoint"}
+    blocked_roots = {"os", "sys", "subprocess", "socket", "pathlib", "requests", "httpx", "shutil"}
+
+    def target_root_name(target):
+        while isinstance(target, (ast.Subscript, ast.Attribute)):
+            target = target.value
+        return target.id if isinstance(target, ast.Name) else None
+
+    def uses_dataframe(expression):
+        return any(isinstance(item, ast.Name) and item.id in {"df", "df_clean"}
+                   for item in ast.walk(expression))
+
+    for block_index, raw_code in enumerate(blocks, 1):
+        code = re.sub(
+            r"^\s*(?:from\s+(?:pandas|numpy|matplotlib(?:\.pyplot)?|seaborn)\s+import.*|"
+            r"import\s+(?:pandas|numpy|matplotlib(?:\.pyplot)?|seaborn)(?:\s+as\s+\w+)?\s*)$",
+            "", raw_code, flags=re.MULTILINE,
+        )
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                raise RuntimeError("안전 차단: 생성 코드에서 추가 모듈을 import할 수 없습니다.")
+            if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+                raise RuntimeError("안전 차단: 특수 속성 접근은 허용되지 않습니다.")
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in blocked_calls:
+                    raise RuntimeError(f"안전 차단: {node.func.id}() 호출은 허용되지 않습니다.")
+                if isinstance(node.func, ast.Attribute) and target_root_name(node.func) in blocked_roots:
+                    raise RuntimeError("안전 차단: 파일·프로세스·네트워크 작업은 허용되지 않습니다.")
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                roots = {target_root_name(target) for target in targets}
+                if "df" in roots:
+                    raise RuntimeError("안전 차단: 업로드 원본 df는 수정할 수 없습니다.")
+                if "df_clean" in roots and any(
+                    isinstance(target, ast.Name) and target.id == "df_clean" for target in targets
+                ):
+                    value = getattr(node, "value", None)
+                    if value is not None and not uses_dataframe(value):
+                        raise RuntimeError("안전 차단: df_clean을 샘플 데이터로 교체할 수 없습니다.")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if target_root_name(node.func.value) == "df" and any(
+                    kw.arg == "inplace" and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True for kw in node.keywords
+                ):
+                    raise RuntimeError("안전 차단: 업로드 원본 df의 inplace 수정은 허용되지 않습니다.")
+
+        before = set(plt.get_fignums())
+        with contextlib.redirect_stdout(stdout):
+            if tree.body and isinstance(tree.body[-1], ast.Expr):
+                final_expression = ast.Expression(tree.body.pop().value)
+                ast.fix_missing_locations(tree)
+                ast.fix_missing_locations(final_expression)
+                if tree.body:
+                    exec(compile(tree, "<gemini-code>", "exec"), namespace)
+                result = eval(compile(final_expression, "<gemini-code>", "eval"), namespace)
+                if result is not None:
+                    capture_display(result)
+            else:
+                exec(compile(tree, "<gemini-code>", "exec"), namespace)
+
+        for fig_num in sorted(set(plt.get_fignums()) - before):
+            chart_path = output_dir / f"generated_chart_{block_index}_{fig_num}.png"
+            plt.figure(fig_num).savefig(chart_path, dpi=150, bbox_inches="tight")
+            chart_paths.append(str(chart_path))
+            plt.close(fig_num)
+
+    updated_frame = namespace.get("df_clean")
+    if not isinstance(updated_frame, pd.DataFrame):
+        raise RuntimeError("실행 결과의 df_clean이 DataFrame이 아닙니다.")
+
+    result_table = None
+    text_outputs = []
+    for value in captured:
+        if isinstance(value, pd.DataFrame):
+            result_table = value
+        elif isinstance(value, pd.Series):
+            result_table = value.to_frame()
+        else:
+            text_outputs.append(str(value))
+    printed = stdout.getvalue().strip()
+    if printed:
+        text_outputs.append(printed)
+    summary = "✅ Python 코드 자동 실행 완료"
+    if text_outputs:
+        summary += "\n\n```text\n" + "\n".join(text_outputs)[:10_000] + "\n```"
+    if result_table is not None:
+        summary += f"\n\n표 결과: {result_table.shape[0]:,}행 × {result_table.shape[1]:,}열"
+    if chart_paths:
+        summary += f"\n\n차트 결과: {len(chart_paths)}개"
+    return updated_frame, summary, result_table, chart_paths
+
+
 def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     return [
         {"role": message["role"], "content": str(message.get("content", ""))}
@@ -140,6 +273,7 @@ def ask_gemini(
     question: str,
     image_path: str | None,
     model_name: str,
+    mode_name: str,
     api_key_input: str,
     session: dict[str, Any] | None,
 ):
@@ -149,11 +283,11 @@ def ask_gemini(
     api_key = (api_key_input or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
 
     if not question:
-        return session, visible_history(session["messages"]), "질문을 입력하세요.", question, image_path
+        return session, visible_history(session["messages"]), "질문을 입력하세요.", question, image_path, "", None, []
     if not isinstance(frame, pd.DataFrame):
-        return session, visible_history(session["messages"]), "먼저 분석 데이터 파일을 등록하세요.", question, image_path
+        return session, visible_history(session["messages"]), "먼저 분석 데이터 파일을 등록하세요.", question, image_path, "", None, []
     if not api_key:
-        return session, visible_history(session["messages"]), "Gemini API 키를 입력하거나 GEMINI_API_KEY를 설정하세요.", question, image_path
+        return session, visible_history(session["messages"]), "Gemini API 키를 입력하거나 GEMINI_API_KEY를 설정하세요.", question, image_path, "", None, []
 
     try:
         client = genai.Client(api_key=api_key)
@@ -167,7 +301,17 @@ def ask_gemini(
             history=content_history(session["messages"]),
         )
 
-        parts = [types.Part.from_text(text=question)]
+        request_text = question
+        if mode_name == "파이썬 코드 자동 실행":
+            request_text += """
+
+[이번 응답 형식]
+표·차트·집계·변환처럼 실제 계산이 필요한 요청이면 Python 코드 블록 하나만 반환하세요.
+요약·설명·해석 요청이면 코드를 작성하지 말고 요청한 설명만 답하세요.
+코드는 이미 존재하는 df_clean을 사용하세요. 파일·프로세스·네트워크 작업과 추가 import는 하지 마세요.
+결과는 result_df 같은 별도 변수에 저장하고 display()로 표시하세요.
+"""
+        parts = [types.Part.from_text(text=request_text)]
         visible_question = question
         if image_path:
             image_bytes = Path(image_path).read_bytes()
@@ -183,9 +327,24 @@ def ask_gemini(
                 {"role": "assistant", "content": answer},
             ]
         )
-        return session, visible_history(session["messages"]), "✅ 응답 완료", "", None
+        execution_summary, result_table, chart_paths = "", None, []
+        if mode_name == "파이썬 코드 자동 실행":
+            try:
+                updated_frame, execution_summary, result_table, chart_paths = execute_python_blocks(
+                    answer, frame
+                )
+                session["dataframe"] = updated_frame
+                if execution_summary.startswith("✅"):
+                    session["messages"].append({
+                        "role": "user",
+                        "content": f"[로컬 Python 실행 결과]\n{execution_summary}",
+                        "hidden": True,
+                    })
+            except Exception as exc:
+                execution_summary = f"❌ Python 코드 실행 실패: {exc}"
+        return session, visible_history(session["messages"]), "✅ 응답 완료", "", None, execution_summary, result_table, chart_paths
     except Exception as exc:
-        return session, visible_history(session["messages"]), f"❌ Gemini 요청 실패: {exc}", question, image_path
+        return session, visible_history(session["messages"]), f"❌ Gemini 요청 실패: {exc}", question, image_path, "", None, []
 
 
 def decode_readable_file(content: bytes) -> str:
@@ -300,6 +459,7 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
 
     with gr.Row():
         model = gr.Dropdown(MODEL_OPTIONS, value=MODEL_OPTIONS[0], label="Gemini 모델")
+        mode = gr.Dropdown(MODE_OPTIONS, value=MODE_OPTIONS[0], label="모드")
         api_key = gr.Textbox(
             label="Gemini API 키",
             type="password",
@@ -315,6 +475,9 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
     preview = gr.Dataframe(label="데이터 미리보기", interactive=False)
     chatbot = gr.Chatbot(label="분석 대화", height=500)
     status = gr.Markdown("준비됨")
+    execution_status = gr.Markdown(label="Python 실행 결과")
+    execution_table = gr.Dataframe(label="실행 표 결과", interactive=False)
+    execution_charts = gr.Gallery(label="실행 차트 결과", columns=2, height="auto")
 
     with gr.Row():
         question = gr.Textbox(label="질문", placeholder="전시 데이터에 관한 질문을 입력하세요.", lines=3, scale=4)
@@ -336,8 +499,11 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
         inputs=[previous_file, session_state],
         outputs=[session_state, chatbot, status],
     )
-    send_inputs = [question, image, model, api_key, session_state]
-    send_outputs = [session_state, chatbot, status, question, image]
+    send_inputs = [question, image, model, mode, api_key, session_state]
+    send_outputs = [
+        session_state, chatbot, status, question, image,
+        execution_status, execution_table, execution_charts,
+    ]
     send_button.click(ask_gemini, inputs=send_inputs, outputs=send_outputs)
     question.submit(ask_gemini, inputs=send_inputs, outputs=send_outputs)
     clear_button.click(clear_display, inputs=[session_state], outputs=[session_state, chatbot, status])
