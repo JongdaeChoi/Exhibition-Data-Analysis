@@ -88,6 +88,13 @@ def load_dataset(file_path: str | None, session: dict[str, Any] | None):
 
 def make_data_context(frame: pd.DataFrame, source_filename: str) -> str:
     describe = frame.describe(include="all").transpose().to_string()
+    column_profiles = []
+    for column in frame.columns:
+        series = frame[column]
+        samples = series.drop_duplicates().head(8).astype(str).tolist()
+        column_profiles.append(
+            f"- {column!r}: 고유값 {series.nunique(dropna=False):,}개 / 예시 {samples}"
+        )
     context = f"""
 [분석 파일]
 {source_filename}
@@ -97,6 +104,9 @@ def make_data_context(frame: pd.DataFrame, source_filename: str) -> str:
 
 [컬럼 및 데이터 타입]
 {frame.dtypes.to_string()}
+
+[정확한 컬럼명과 고유값 예시]
+{chr(10).join(column_profiles)}
 
 [결측치]
 {frame.isnull().sum().to_string()}
@@ -120,7 +130,8 @@ def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
 - 사용자가 요청한 결과만 간결하게 답하세요.
 - 실제 계산이 필요하면 현재 데이터프레임의 컬럼에 맞는 Python 코드를 제공하세요.
 - 자동 실행 모드에서는 모델이 작성한 Python 코드가 제한된 분석 환경에서 실행될 수 있습니다.
-- 시간 컬럼으로 교차표를 만들 때 사용자가 분·초 단위를 명시하지 않으면 시(hour, 0~23) 단위로 집계하세요.
+- 사용자가 지정한 컬럼명은 완전히 동일한 이름으로 사용하세요. 비슷한 컬럼으로 대체하지 마세요.
+- 특히 '스캔시간'과 '스캔시각'은 서로 다른 컬럼이므로 절대로 혼동하거나 교체하지 마세요.
 - 데이터에 없는 숫자를 계산된 사실처럼 만들지 마세요.
 
 {make_data_context(frame, source_filename)}
@@ -166,34 +177,9 @@ def table_for_gradio(value: pd.DataFrame | pd.Series) -> pd.DataFrame:
 
 
 def displayable_wide_table(table: pd.DataFrame, max_columns: int = 100):
-    """초광폭 결과를 시간 단위로 축약하거나 안전한 표시 폭으로 제한합니다."""
+    """초광폭 결과는 원본 의미를 바꾸지 않고 안전한 표시 폭으로 제한합니다."""
     if table.shape[1] <= max_columns:
         return table, ""
-
-    hours = []
-    for column in table.columns:
-        if isinstance(column, (dt.datetime, dt.time, pd.Timestamp)):
-            hours.append(column.hour)
-            continue
-        match = re.search(
-            r"(?:^|\s)([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?$",
-            str(column).strip(),
-        )
-        hours.append(int(match.group(1)) if match else None)
-
-    time_ratio = sum(hour is not None for hour in hours) / max(len(hours), 1)
-    if time_ratio >= 0.9:
-        original_name = table.columns.name or "시간"
-        valid_positions = [position for position, hour in enumerate(hours) if hour is not None]
-        valid_hours = [hours[position] for position in valid_positions]
-        time_table = table.iloc[:, valid_positions]
-        collapsed = time_table.T.groupby(valid_hours, sort=True).sum().T
-        collapsed.columns.name = f"{original_name}(시)"
-        note = (
-            f"ℹ️ 원본 결과가 {table.shape[1]:,}개 시간값 열이어서 "
-            f"시(hour) 단위 {collapsed.shape[1]}개 열로 자동 집계했습니다."
-        )
-        return collapsed, note
 
     limited = table.iloc[:, :max_columns].copy()
     note = (
@@ -203,11 +189,32 @@ def displayable_wide_table(table: pd.DataFrame, max_columns: int = 100):
     return limited, note
 
 
-def execute_python_blocks(answer: str, frame: pd.DataFrame):
+def execute_python_blocks(
+    answer: str,
+    frame: pd.DataFrame,
+    required_columns: list[str] | None = None,
+):
     """제한된 분석 환경에서 모델의 Python 블록을 실행합니다."""
     blocks = re.findall(r"```python\s*(.*?)```", answer, flags=re.DOTALL | re.IGNORECASE)
     if not blocks:
         return frame, "코드 블록이 없어 자동 실행하지 않았습니다.", None, []
+
+    required_columns = required_columns or []
+    used_column_names = set()
+    for raw_code in blocks:
+        parsed = ast.parse(raw_code)
+        used_column_names.update(
+            node.value for node in ast.walk(parsed)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in frame.columns
+        )
+    missing_columns = [column for column in required_columns if column not in used_column_names]
+    if missing_columns:
+        raise RuntimeError(
+            "컬럼명 검증 실패: 요청한 컬럼을 생성 코드가 정확히 사용하지 않았습니다: "
+            + ", ".join(repr(column) for column in missing_columns)
+        )
 
     captured: list[Any] = []
     stdout = io.StringIO()
@@ -400,7 +407,8 @@ def ask_gemini(
 표·차트·집계·변환처럼 실제 계산이 필요한 요청이면 Python 코드 블록 하나만 반환하세요.
 요약·설명·해석 요청이면 코드를 작성하지 말고 요청한 설명만 답하세요.
 코드는 이미 존재하는 df_clean을 사용하세요. 파일·프로세스·네트워크 작업과 추가 import는 하지 마세요.
-시간 컬럼으로 교차표를 만들 때 분·초 단위 요청이 없으면 반드시 시(hour, 0~23) 단위로 집계하세요.
+사용자가 명시한 컬럼명은 철자까지 완전히 동일하게 사용하고 비슷한 컬럼으로 대체하지 마세요.
+'스캔시간'과 '스캔시각'은 서로 다른 컬럼이므로 절대로 혼동하지 마세요.
 결과는 result_df 같은 별도 변수에 저장하고 display()로 표시하세요.
 """
         parts = [types.Part.from_text(text=request_text)]
@@ -422,8 +430,12 @@ def ask_gemini(
         execution_summary, result_table, chart_paths = "", None, []
         if mode_name == "파이썬 코드 자동 실행":
             try:
+                required_columns = [
+                    str(column) for column in frame.columns
+                    if str(column) in question
+                ]
                 updated_frame, execution_summary, result_table, chart_paths = execute_python_blocks(
-                    answer, frame
+                    answer, frame, required_columns=required_columns
                 )
                 session["dataframe"] = updated_frame
                 if execution_summary.startswith("✅"):
