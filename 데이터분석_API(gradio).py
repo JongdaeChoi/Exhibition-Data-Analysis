@@ -80,7 +80,7 @@ def load_dataset(file_path: str | None, session: dict[str, Any] | None):
         session["source_filename"] = Path(file_path).name
         return (
             session,
-            frame.head(20),
+            frame.head(5),
             f"✅ 데이터 등록 완료: {Path(file_path).name} / {frame.shape[0]:,}행 × {frame.shape[1]:,}열",
         )
     except Exception as exc:
