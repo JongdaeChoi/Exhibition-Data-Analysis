@@ -242,6 +242,53 @@ def table_payload(table: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def table_payload_to_markdown(
+    payload: dict[str, Any],
+    max_rows: int = 500,
+    max_columns: int = 50,
+) -> str:
+    """Colab에서도 안정적으로 보이도록 실행 표를 Markdown으로 변환합니다."""
+    headers = list(payload.get("headers", []))[:max_columns]
+    rows = list(payload.get("data", []))
+
+    def escape_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        return (
+            str(value)
+            .replace("\\", "\\\\")
+            .replace("|", "\\|")
+            .replace("\r\n", "<br>")
+            .replace("\n", "<br>")
+            .replace("\r", "<br>")
+        )
+
+    if not headers:
+        return "**실행 표 결과**\n\n표시할 열이 없습니다."
+
+    displayed_rows = rows[:max_rows]
+    lines = [
+        "**실행 표 결과**",
+        "",
+        "| " + " | ".join(escape_cell(header) for header in headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in displayed_rows:
+        row_values = list(row)[: len(headers)]
+        row_values.extend([""] * (len(headers) - len(row_values)))
+        lines.append("| " + " | ".join(escape_cell(value) for value in row_values) + " |")
+
+    notes = []
+    if len(rows) > max_rows:
+        notes.append(f"전체 {len(rows):,}행 중 처음 {max_rows:,}행만 표시했습니다.")
+    total_columns = len(payload.get("headers", []))
+    if total_columns > max_columns:
+        notes.append(f"전체 {total_columns:,}열 중 처음 {max_columns:,}열만 표시했습니다.")
+    if notes:
+        lines.extend(["", "⚠️ " + " ".join(notes)])
+    return "\n".join(lines)
+
+
 def displayable_wide_table(table: pd.DataFrame, max_columns: int = 100):
     """초광폭 결과는 원본 의미를 바꾸지 않고 안전한 표시 폭으로 제한합니다."""
     if table.shape[1] <= max_columns:
@@ -414,18 +461,10 @@ def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if kind == "table":
             payload = message.get("content")
             if isinstance(payload, pd.DataFrame):
-                table_value = table_for_gradio(payload)
+                payload = table_payload(table_for_gradio(payload))
             else:
                 payload = payload if isinstance(payload, dict) else {}
-                table_value = pd.DataFrame(
-                    payload.get("data", []),
-                    columns=payload.get("headers", []),
-                )
-            content = gr.Dataframe(
-                value=table_value,
-                label="실행 표 결과",
-                interactive=False,
-            )
+            content = table_payload_to_markdown(payload)
         elif kind == "chart":
             content = gr.Image(
                 value=message.get("content"),
