@@ -12,6 +12,7 @@ import contextlib
 import datetime as dt
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -152,7 +153,7 @@ def content_history(messages: list[dict[str, Any]]) -> list[types.Content]:
 
 
 def table_for_gradio(value: pd.DataFrame | pd.Series) -> pd.DataFrame:
-    """Gradio가 숨기는 의미 있는 인덱스를 일반 열로 변환합니다."""
+    """인덱스·컬럼·셀 값을 Gradio/JSON에서 안전한 표로 정규화합니다."""
     table = value.to_frame() if isinstance(value, pd.Series) else value.copy()
     index = table.index
     is_default_index = (
@@ -162,18 +163,83 @@ def table_for_gradio(value: pd.DataFrame | pd.Series) -> pd.DataFrame:
         and index.step == 1
         and index.stop == len(table)
     )
-    if is_default_index:
-        return table
+    if not is_default_index:
+        existing_names = {str(column) for column in table.columns}
+        safe_names = []
+        for position, name in enumerate(index.names, 1):
+            candidate = str(name) if name is not None else f"index_{position}"
+            while candidate in existing_names or candidate in safe_names:
+                candidate += "_index"
+            safe_names.append(candidate)
+        table.index = table.index.set_names(safe_names)
+        table = table.reset_index()
 
-    existing_names = {str(column) for column in table.columns}
-    safe_names = []
-    for position, name in enumerate(index.names, 1):
-        candidate = str(name) if name is not None else f"index_{position}"
-        while candidate in existing_names or candidate in safe_names:
-            candidate += "_index"
-        safe_names.append(candidate)
-    table.index = table.index.set_names(safe_names)
-    return table.reset_index()
+    flattened_columns = []
+    used_names = set()
+    for column in table.columns:
+        if isinstance(column, tuple):
+            base_name = " | ".join(str(part) for part in column if str(part)) or "column"
+        else:
+            base_name = str(column)
+        candidate = base_name
+        suffix = 2
+        while candidate in used_names:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        used_names.add(candidate)
+        flattened_columns.append(candidate)
+    table.columns = flattened_columns
+
+    def json_safe_cell(cell):
+        if cell is None or cell is pd.NA or cell is pd.NaT:
+            return None
+        if isinstance(cell, np.generic):
+            return json_safe_cell(cell.item())
+        if isinstance(cell, (dt.datetime, dt.date, dt.time, pd.Timestamp, pd.Timedelta)):
+            return str(cell)
+        if isinstance(cell, float):
+            return cell if math.isfinite(cell) else None
+        if isinstance(cell, (str, int, bool)):
+            return cell
+        if isinstance(cell, (list, tuple, set, dict)):
+            return json.dumps(cell, ensure_ascii=False, default=str)
+        try:
+            if bool(pd.isna(cell)):
+                return None
+        except (TypeError, ValueError):
+            pass
+        return str(cell)
+
+    for column in table.columns:
+        table[column] = table[column].map(json_safe_cell)
+    return table
+
+
+def captured_value_table(value: Any) -> pd.DataFrame | None:
+    """모델이 display()한 표 또는 컬럼별 빈도 사전을 DataFrame으로 변환합니다."""
+    if isinstance(value, (pd.DataFrame, pd.Series)):
+        return value.to_frame() if isinstance(value, pd.Series) else value
+    if isinstance(value, dict) and value:
+        rows = []
+        for feature, counts in value.items():
+            if isinstance(counts, pd.Series):
+                items = counts.items()
+            elif isinstance(counts, dict):
+                items = counts.items()
+            else:
+                return None
+            for unique_value, count in items:
+                rows.append({"feature": feature, "unique_value": unique_value, "count": count})
+        return pd.DataFrame(rows)
+    return None
+
+
+def table_payload(table: pd.DataFrame) -> dict[str, Any]:
+    """세션 상태에는 DataFrame 대신 JSON 직렬화 가능한 값만 저장합니다."""
+    return {
+        "headers": list(table.columns),
+        "data": table.values.tolist(),
+    }
 
 
 def displayable_wide_table(table: pd.DataFrame, max_columns: int = 100):
@@ -316,13 +382,9 @@ def execute_python_blocks(
     text_outputs = []
     table_notes = []
     for value in captured:
-        if isinstance(value, pd.DataFrame):
-            display_table, table_note = displayable_wide_table(value)
-            result_table = table_for_gradio(display_table)
-            if table_note:
-                table_notes.append(table_note)
-        elif isinstance(value, pd.Series):
-            display_table, table_note = displayable_wide_table(value.to_frame())
+        captured_table = captured_value_table(value)
+        if captured_table is not None:
+            display_table, table_note = displayable_wide_table(captured_table)
             result_table = table_for_gradio(display_table)
             if table_note:
                 table_notes.append(table_note)
@@ -350,8 +412,17 @@ def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         kind = message.get("kind", "text")
         if kind == "table":
+            payload = message.get("content")
+            if isinstance(payload, pd.DataFrame):
+                table_value = table_for_gradio(payload)
+            else:
+                payload = payload if isinstance(payload, dict) else {}
+                table_value = pd.DataFrame(
+                    payload.get("data", []),
+                    columns=payload.get("headers", []),
+                )
             content = gr.Dataframe(
-                value=message.get("content"),
+                value=table_value,
                 label="실행 표 결과",
                 interactive=False,
             )
@@ -461,7 +532,7 @@ def ask_gemini(
                     if result_table is not None:
                         session["messages"].append({
                             "role": "assistant",
-                            "content": result_table,
+                            "content": table_payload(result_table),
                             "kind": "table",
                             "include_in_context": False,
                         })
@@ -651,4 +722,5 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(inbrowser=True)
+    running_in_colab = bool(os.getenv("COLAB_RELEASE_TAG") or os.getenv("COLAB_GPU"))
+    demo.launch(inbrowser=not running_in_colab, debug=running_in_colab)
