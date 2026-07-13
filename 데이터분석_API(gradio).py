@@ -12,23 +12,32 @@ import contextlib
 import datetime as dt
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
 import re
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Any
 
 import gradio as gr
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
+import matplotlib.text as mtext
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from google import genai
 from google.genai import types
+
+try:
+    import koreanize_matplotlib
+except ImportError:
+    koreanize_matplotlib = None
 
 
 MODEL_OPTIONS = (
@@ -39,6 +48,42 @@ MODEL_OPTIONS = (
 MAX_CONTEXT_CHARS = 60_000
 HISTORY_SCHEMA_VERSION = 1
 MODE_OPTIONS = ("일반 분석", "파이썬 코드 자동 실행")
+
+
+def apply_korean_chart_font(figure=None) -> str:
+    """실행 환경과 무관하게 차트의 한글 글꼴을 사용 가능한 폰트로 교정합니다."""
+    if koreanize_matplotlib is not None:
+        koreanize_matplotlib.koreanize()
+        font_family = "NanumGothic"
+    else:
+        font_candidates = [
+            Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf",
+            Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        ]
+        font_family = None
+        for font_path in font_candidates:
+            if font_path.exists():
+                fm.fontManager.addfont(str(font_path))
+                font_family = fm.FontProperties(fname=str(font_path)).get_name()
+                break
+        if font_family is None:
+            available = {font.name for font in fm.fontManager.ttflist}
+            font_family = next(
+                (name for name in ("Malgun Gothic", "AppleGothic", "Noto Sans CJK KR") if name in available),
+                "DejaVu Sans",
+            )
+        plt.rcParams["font.family"] = font_family
+        plt.rcParams["axes.unicode_minus"] = False
+
+    if figure is not None:
+        for text_item in figure.findobj(match=mtext.Text):
+            text_item.set_fontfamily(font_family)
+    return font_family
+
+
+apply_korean_chart_font()
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 
 def new_session() -> dict[str, Any]:
@@ -135,6 +180,8 @@ def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
 - 유사한 컬럼명이 여러 개면 제공된 정확한 컬럼명과 고유값 예시를 확인하고, 사용자가 명시한 컬럼만 사용하세요.
 - 사용자가 "각 특성별 표"처럼 표를 나누어 요청하면 컬럼마다 별도 DataFrame을 만들고 반복문 안에서 각각 display() 하세요.
 - 사용자가 하나의 통합 표를 요청하면 각 컬럼의 결과와 원본 컬럼명을 누적한 뒤 하나의 DataFrame으로 만드세요. 사용자가 요청한 표 분리 방식을 임의로 바꾸지 마세요.
+- 차트 글꼴은 실행 환경에서 이미 설정하므로 Malgun Gothic 같은 운영체제 전용 글꼴을 직접 지정하지 마세요.
+- seaborn 막대그래프에서 palette를 사용하면 범주 축 변수를 hue에도 지정하고 legend=False로 설정하세요. 단색이면 palette 대신 color를 사용하세요.
 - 데이터에 없는 숫자를 계산된 사실처럼 만들지 마세요.
 
 {make_data_context(frame, source_filename)}
@@ -409,7 +456,17 @@ def execute_python_blocks(
                     raise RuntimeError("안전 차단: 업로드 원본 df의 inplace 수정은 허용되지 않습니다.")
 
         before = set(plt.get_fignums())
-        with contextlib.redirect_stdout(stdout):
+        with warnings.catch_warnings(), contextlib.redirect_stdout(stdout):
+            warnings.filterwarnings(
+                "ignore",
+                message=r"(?s).*Passing `palette` without assigning `hue`.*",
+                category=FutureWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Glyph .* missing from font.*",
+                category=UserWarning,
+            )
             if tree.body and isinstance(tree.body[-1], ast.Expr):
                 final_expression = ast.Expression(tree.body.pop().value)
                 ast.fix_missing_locations(tree)
@@ -424,7 +481,15 @@ def execute_python_blocks(
 
         for fig_num in sorted(set(plt.get_fignums()) - before):
             chart_path = output_dir / f"generated_chart_{block_index}_{fig_num}.png"
-            plt.figure(fig_num).savefig(chart_path, dpi=150, bbox_inches="tight")
+            figure = plt.figure(fig_num)
+            apply_korean_chart_font(figure)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Glyph .* missing from font.*",
+                    category=UserWarning,
+                )
+                figure.savefig(chart_path, dpi=150, bbox_inches="tight")
             chart_paths.append(str(chart_path))
             plt.close(fig_num)
 
@@ -551,6 +616,8 @@ def ask_gemini(
 사용자가 "각 특성별 표"처럼 별도 표를 요청하면 컬럼별 DataFrame을 만들고 반복문 안에서 각각 display() 하세요.
 사용자가 하나의 통합 표를 요청한 경우에만 각 컬럼 결과를 누적하여 하나의 result_df로 합치세요.
 여러 display() 결과도 화면에 순서대로 표시되므로 마지막 표만 남기려고 결과를 덮어쓰지 마세요.
+차트 글꼴은 앱에서 설정하므로 Malgun Gothic 같은 운영체제 전용 글꼴을 지정하지 마세요.
+seaborn barplot에서 palette를 쓰면 범주 축과 같은 변수를 hue에 지정하고 legend=False로 설정하세요. 단색 차트는 color를 사용하세요.
 """
         parts = [types.Part.from_text(text=request_text)]
         visible_question = question
