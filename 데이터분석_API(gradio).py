@@ -133,8 +133,8 @@ def make_system_prompt(frame: pd.DataFrame, source_filename: str) -> str:
 - 자동 실행 모드에서는 모델이 작성한 Python 코드가 제한된 분석 환경에서 실행될 수 있습니다.
 - 사용자가 지정한 컬럼명은 완전히 동일한 이름으로 사용하세요. 접두어가 같거나 의미가 비슷한 다른 컬럼으로 추정·대체하지 마세요.
 - 유사한 컬럼명이 여러 개면 제공된 정확한 컬럼명과 고유값 예시를 확인하고, 사용자가 명시한 컬럼만 사용하세요.
-- 여러 컬럼 또는 모든 특성의 결과를 요청받으면 반복문에서 같은 결과 변수를 덮어쓰지 마세요. 각 컬럼의 결과와 원본 컬럼명을 누적한 뒤 하나의 통합 DataFrame으로 만드세요.
-- 여러 컬럼의 표 결과는 컬럼별 마지막 결과만 표시하지 말고, 요청된 모든 컬럼이 포함된 통합 표를 반복문 종료 후 한 번만 display() 하세요.
+- 사용자가 "각 특성별 표"처럼 표를 나누어 요청하면 컬럼마다 별도 DataFrame을 만들고 반복문 안에서 각각 display() 하세요.
+- 사용자가 하나의 통합 표를 요청하면 각 컬럼의 결과와 원본 컬럼명을 누적한 뒤 하나의 DataFrame으로 만드세요. 사용자가 요청한 표 분리 방식을 임의로 바꾸지 마세요.
 - 데이터에 없는 숫자를 계산된 사실처럼 만들지 마세요.
 
 {make_data_context(frame, source_filename)}
@@ -236,12 +236,15 @@ def captured_value_table(value: Any) -> pd.DataFrame | None:
     return None
 
 
-def table_payload(table: pd.DataFrame) -> dict[str, Any]:
+def table_payload(table: pd.DataFrame, title: str | None = None) -> dict[str, Any]:
     """세션 상태에는 DataFrame 대신 JSON 직렬화 가능한 값만 저장합니다."""
-    return {
+    payload = {
         "headers": list(table.columns),
         "data": table.values.tolist(),
     }
+    if title:
+        payload["title"] = title
+    return payload
 
 
 def table_payload_to_markdown(
@@ -265,12 +268,14 @@ def table_payload_to_markdown(
             .replace("\r", "<br>")
         )
 
+    title = str(payload.get("title") or "실행 표 결과")
+    safe_title = escape_cell(title).replace("*", "\\*").replace("_", "\\_")
     if not headers:
-        return "**실행 표 결과**\n\n표시할 열이 없습니다."
+        return f"**{safe_title}**\n\n표시할 열이 없습니다."
 
     displayed_rows = rows[:max_rows]
     lines = [
-        "**실행 표 결과**",
+        f"**{safe_title}**",
         "",
         "| " + " | ".join(escape_cell(header) for header in headers) + " |",
         "| " + " | ".join("---" for _ in headers) + " |",
@@ -427,14 +432,14 @@ def execute_python_blocks(
     if not isinstance(updated_frame, pd.DataFrame):
         raise RuntimeError("실행 결과의 df_clean이 DataFrame이 아닙니다.")
 
-    result_table = None
+    result_tables = []
     text_outputs = []
     table_notes = []
     for value in captured:
         captured_table = captured_value_table(value)
         if captured_table is not None:
             display_table, table_note = displayable_wide_table(captured_table)
-            result_table = table_for_gradio(display_table)
+            result_tables.append(table_for_gradio(display_table))
             if table_note:
                 table_notes.append(table_note)
         else:
@@ -445,13 +450,17 @@ def execute_python_blocks(
     summary = "✅ Python 코드 자동 실행 완료"
     if text_outputs:
         summary += "\n\n```text\n" + "\n".join(text_outputs)[:10_000] + "\n```"
-    if result_table is not None:
+    if len(result_tables) == 1:
+        result_table = result_tables[0]
         summary += f"\n\n표 결과: {result_table.shape[0]:,}행 × {result_table.shape[1]:,}열"
+    elif result_tables:
+        total_rows = sum(len(table) for table in result_tables)
+        summary += f"\n\n표 결과: {len(result_tables):,}개 표 · 총 {total_rows:,}행"
     if table_notes:
         summary += "\n\n" + "\n\n".join(table_notes)
     if chart_paths:
         summary += f"\n\n차트 결과: {len(chart_paths)}개"
-    return updated_frame, summary, result_table, chart_paths
+    return updated_frame, summary, result_tables, chart_paths
 
 
 def visible_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -539,9 +548,9 @@ def ask_gemini(
 사용자가 명시한 컬럼명은 철자까지 완전히 동일하게 사용하세요.
 접두어가 같거나 의미가 비슷한 다른 컬럼으로 추정·대체하지 마세요.
 결과는 result_df 같은 별도 변수에 저장하고 display()로 표시하세요.
-여러 컬럼 또는 모든 특성의 결과를 요청받으면 반복문에서 result_df를 계속 덮어쓰지 마세요.
-각 컬럼의 결과에 원본 컬럼명을 포함해 리스트 등에 누적한 뒤, 요청된 모든 컬럼을 포함하는 하나의 통합 result_df를 만드세요.
-통합 result_df는 반복문이 모두 끝난 후 display(result_df)로 한 번만 표시하세요.
+사용자가 "각 특성별 표"처럼 별도 표를 요청하면 컬럼별 DataFrame을 만들고 반복문 안에서 각각 display() 하세요.
+사용자가 하나의 통합 표를 요청한 경우에만 각 컬럼 결과를 누적하여 하나의 result_df로 합치세요.
+여러 display() 결과도 화면에 순서대로 표시되므로 마지막 표만 남기려고 결과를 덮어쓰지 마세요.
 """
         parts = [types.Part.from_text(text=request_text)]
         visible_question = question
@@ -559,11 +568,11 @@ def ask_gemini(
                 {"role": "assistant", "content": answer},
             ]
         )
-        execution_summary, result_table, chart_paths = "", None, []
+        execution_summary, result_tables, chart_paths = "", [], []
         if mode_name == "파이썬 코드 자동 실행":
             try:
                 required_columns = requested_column_names(question, frame.columns)
-                updated_frame, execution_summary, result_table, chart_paths = execute_python_blocks(
+                updated_frame, execution_summary, result_tables, chart_paths = execute_python_blocks(
                     answer, frame, required_columns=required_columns
                 )
                 session["dataframe"] = updated_frame
@@ -573,10 +582,14 @@ def ask_gemini(
                         "content": execution_summary,
                         "include_in_context": False,
                     })
-                    if result_table is not None:
+                    for result_table in result_tables:
+                        if len(result_tables) > 1 and len(result_table.columns) > 0:
+                            table_title = f"Feature: {result_table.columns[0]}"
+                        else:
+                            table_title = "실행 표 결과"
                         session["messages"].append({
                             "role": "assistant",
-                            "content": table_payload(result_table),
+                            "content": table_payload(result_table, title=table_title),
                             "kind": "table",
                             "include_in_context": False,
                         })
