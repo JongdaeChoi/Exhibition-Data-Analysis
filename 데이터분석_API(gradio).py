@@ -835,12 +835,12 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
     register_button = gr.Button("기존대화 불러오기")
     with gr.Accordion("데이터 미리보기 표시/숨기기", open=False):
         preview = gr.Dataframe(label="데이터 미리보기 (최대 5행)", interactive=False)
-    chatbot = gr.Chatbot(label="분석 대화", height=500, elem_id="analysis-chatbot")
+    chatbot = gr.Chatbot(label="분석 대화", height=650, elem_id="analysis-chatbot")
     status = gr.Markdown("준비됨")
 
     with gr.Row():
         question = gr.Textbox(label="질문", placeholder="전시 데이터에 관한 질문을 입력하세요.", lines=3, scale=4)
-        image = gr.Image(label="이미지 첨부", type="filepath", scale=1)
+        image = gr.Image(label="이미지 첨부", type="filepath", height=110, scale=1)
 
     with gr.Row():
         send_button = gr.Button("질문 전송", variant="primary")
