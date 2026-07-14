@@ -48,6 +48,27 @@ MODEL_OPTIONS = (
 MAX_CONTEXT_CHARS = 60_000
 HISTORY_SCHEMA_VERSION = 1
 MODE_OPTIONS = ("일반 분석", "파이썬 코드 자동 실행")
+APP_CSS = """
+#analysis-chatbot .message-row.bot-row:has(.image-container),
+#analysis-chatbot .message-row.bot-row:has(.image-container) .flex-wrap,
+#analysis-chatbot .message-row.bot-row:has(.image-container) .bot.message,
+#analysis-chatbot .message-row.bot-row:has(.image-container) .message.component,
+#analysis-chatbot .message-row.bot-row:has(.image-container) .image-container,
+#analysis-chatbot .message-row.bot-row:has(.image-container) .image-container > button,
+#analysis-chatbot .message-row.bot-row:has(.image-container) .image-frame {
+    width: fit-content !important;
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+#analysis-chatbot .message-row.bot-row:has(.image-container) .image-frame img {
+    width: auto !important;
+    height: auto !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    object-fit: contain !important;
+}
+"""
 
 
 def apply_korean_chart_font(figure=None) -> str:
@@ -813,7 +834,7 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
     load_button = gr.Button("데이터 불러오기", variant="primary")
     register_button = gr.Button("기존대화 불러오기")
     preview = gr.Dataframe(label="데이터 미리보기", interactive=False)
-    chatbot = gr.Chatbot(label="분석 대화", height=500)
+    chatbot = gr.Chatbot(label="분석 대화", height=500, elem_id="analysis-chatbot")
     status = gr.Markdown("준비됨")
 
     with gr.Row():
@@ -847,4 +868,4 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
 
 if __name__ == "__main__":
     running_in_colab = bool(os.getenv("COLAB_RELEASE_TAG") or os.getenv("COLAB_GPU"))
-    demo.launch(inbrowser=not running_in_colab, debug=running_in_colab)
+    demo.launch(inbrowser=not running_in_colab, debug=running_in_colab, css=APP_CSS)
