@@ -68,6 +68,12 @@ APP_CSS = """
     max-height: none !important;
     object-fit: contain !important;
 }
+
+#analysis-chatbot [data-testid="bot"],
+#analysis-chatbot [data-testid="user"] {
+    font-size: var(--text-sm) !important;
+    line-height: 1.5 !important;
+}
 """
 
 
@@ -828,8 +834,13 @@ with gr.Blocks(title="전시 데이터 분석") as demo:
         )
 
     with gr.Row():
-        dataset_file = gr.File(label="분석 데이터 등록", file_types=[".csv", ".xlsx", ".xls"], type="filepath")
-        previous_file = gr.File(label="기존대화 등록", type="filepath")
+        dataset_file = gr.File(
+            label="분석 데이터 등록",
+            file_types=[".csv", ".xlsx", ".xls"],
+            type="filepath",
+            height=110,
+        )
+        previous_file = gr.File(label="기존대화 등록", type="filepath", height=110)
 
     load_button = gr.Button("데이터 불러오기", variant="primary")
     register_button = gr.Button("기존대화 불러오기")
