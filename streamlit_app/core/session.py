@@ -11,14 +11,14 @@ SESSION_DEFAULTS = {
     "df_clean": None,
     "source_filename": None,
     "load_source": None,
-    "preprocessing_history": [],
+    "preprocessing_notice": None,
 }
 
 
 def initialize_session() -> None:
     for key, value in SESSION_DEFAULTS.items():
         if key not in st.session_state:
-            st.session_state[key] = list(value) if isinstance(value, list) else value
+            st.session_state[key] = value
 
 
 def store_dataset(dataset: LoadedDataset, source: str) -> None:
@@ -27,7 +27,7 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.df_clean = dataset.df_clean.copy(deep=True)
     st.session_state.source_filename = dataset.filename
     st.session_state.load_source = source
-    st.session_state.preprocessing_history = []
+    st.session_state.preprocessing_notice = None
 
 
 def has_dataset() -> bool:
