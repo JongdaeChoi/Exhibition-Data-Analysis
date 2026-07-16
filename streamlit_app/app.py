@@ -6,6 +6,7 @@ from core.session import has_dataset, initialize_session, store_dataset
 from data.loader import DataLoadError, download_google_drive_file, load_table
 from data.profiler import build_basic_profile
 from ui.preprocessing_view import render_preprocessing
+from ui.visualization_view import render_visualization
 
 
 st.set_page_config(page_title="데이터 분석", page_icon="📊", layout="wide")
@@ -98,5 +99,7 @@ if has_dataset():
         st.dataframe(df.head(20), width="stretch")
     st.divider()
     render_preprocessing()
+    st.divider()
+    render_visualization()
 else:
     st.info("파일을 선택하고 적재하면 데이터 기본 현황이 여기에 표시됩니다.")
