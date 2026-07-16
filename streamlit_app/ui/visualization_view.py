@@ -151,10 +151,27 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
 
 def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     prefix = f"viz_{index}_adv"
-    c1, c2, c3 = st.columns(3)
-    sort = c1.selectbox("정렬", ["none", "ascending", "descending"], key=f"{prefix}_sort")
-    top_n_enabled = c2.checkbox("상위 N개 제한", True, key=f"{prefix}_top_enabled")
-    top_n = c3.number_input("상위 N", 1, 500, 20, key=f"{prefix}_top", disabled=not top_n_enabled)
+    c1, c2, c3, c4 = st.columns(4)
+    sort_options = ["none", "ascending", "descending"]
+    sort_labels = {"none": "정렬 안 함", "ascending": "오름차순", "descending": "내림차순"}
+    x_sort = c1.selectbox(
+        "X축 값 정렬",
+        sort_options,
+        format_func=lambda item: sort_labels[item],
+        key=f"{prefix}_x_sort",
+        disabled=chart_type == "pie",
+    )
+    y_sort = c2.selectbox(
+        "Y축 값 정렬",
+        sort_options,
+        format_func=lambda item: sort_labels[item],
+        key=f"{prefix}_y_sort",
+        disabled=chart_type == "pie",
+    )
+    if chart_type == "pie":
+        x_sort = y_sort = "none"
+    top_n_enabled = c3.checkbox("상위 N개 제한", True, key=f"{prefix}_top_enabled")
+    top_n = c4.number_input("상위 N", 1, 500, 20, key=f"{prefix}_top", disabled=not top_n_enabled)
     c4, c5, c6 = st.columns(3)
     include_missing = c4.checkbox("결측값 포함", False, key=f"{prefix}_missing")
     palette = c5.selectbox("색상 팔레트", ["Blues", "viridis", "magma", "Set2", "tab10", "coolwarm"], key=f"{prefix}_palette")
@@ -180,7 +197,7 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     bar_mode = "basic"
     histogram_bins = 10
     histogram_density = False
-    line_style, line_width, marker, marker_size, area_fill = "-", 2.0, "o", 5.0, False
+    line_style, line_width, marker, marker_size, area_fill, line_curvature = "-", 2.0, "o", 5.0, False, 0.0
     pie_start_angle, donut, pie_shadow, pie_min_ratio = 90, False, False, 0.0
     scatter_size, trendline = 80.0, False
     heatmap_cmap, heatmap_annotate, heatmap_colorbar, heatmap_linewidth = "Blues", True, True, 0.5
@@ -194,9 +211,10 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         line_style = a.selectbox("선 스타일", ["-", "--", "-.", ":"], key=f"{prefix}_line_style")
         line_width = b.slider("선 두께", 0.2, 10.0, 2.0, 0.2, key=f"{prefix}_line_width")
         marker = c.selectbox("마커", ["o", "s", "^", "D", "x", "+"], key=f"{prefix}_marker")
-        a2, b2 = st.columns(2)
+        a2, b2, c2 = st.columns(3)
         marker_size = a2.slider("마커 크기", 1.0, 30.0, 5.0, 1.0, key=f"{prefix}_marker_size")
         area_fill = b2.checkbox("영역 채우기", False, key=f"{prefix}_area")
+        line_curvature = c2.slider("선의 곡선률", 0.0, 1.0, 0.0, 0.05, key=f"{prefix}_curvature")
     elif chart_type == "pie":
         a, b, c = st.columns(3)
         pie_start_angle = a.slider("시작 각도", 0, 360, 90, key=f"{prefix}_pie_angle")
@@ -218,7 +236,8 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         heatmap_colorbar = c.checkbox("컬러바 표시", True, key=f"{prefix}_heatmap_cbar")
         heatmap_linewidth = st.slider("셀 경계선", 0.0, 5.0, 0.5, 0.1, key=f"{prefix}_heatmap_line")
     return AdvancedSettings(
-        sort=sort,
+        x_sort=x_sort,
+        y_sort=y_sort,
         top_n=top_n if top_n_enabled else None,
         include_missing=include_missing,
         orientation=orientation,
@@ -244,6 +263,7 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         marker=marker,
         marker_size=marker_size,
         area_fill=area_fill,
+        line_curvature=line_curvature,
         pie_start_angle=pie_start_angle,
         donut=donut,
         pie_shadow=pie_shadow,
@@ -257,17 +277,131 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     )
 
 
-def _deep_controls(index: int, chart_type: str) -> DeepSettings:
+def _axis_kind(frame: pd.DataFrame, basic: dict, axis: str) -> tuple[str, str | None]:
+    chart_type = basic["chart_type"]
+    if chart_type == "pie":
+        return "unavailable", None
+    if axis == "x":
+        column = basic["x"]
+        if chart_type in {"bar", "heatmap"}:
+            return "category", column
+        if chart_type == "histogram":
+            return "numeric", column
+    else:
+        column = basic.get("y")
+        if chart_type == "heatmap":
+            return "category", column
+        if chart_type != "scatter_bubble":
+            return "numeric", None
+    if column and pd.api.types.is_numeric_dtype(frame[column]):
+        return "numeric", column
+    return "category", column
+
+
+def _axis_controls(index: int, axis: str, kind: str, column: str | None, frame: pd.DataFrame) -> dict:
+    prefix = f"viz_{index}_deep_{axis}axis"
+    axis_name = axis.upper()
+    result = {
+        f"{axis}_axis_mode": "all",
+        f"{axis}_min": None,
+        f"{axis}_max": None,
+        f"{axis}_tick_interval": None,
+        f"{axis}_category_start": None,
+        f"{axis}_category_end": None,
+        f"{axis}_selected_categories": [],
+    }
+    with st.container(border=True):
+        st.markdown(f"##### {axis_name}축 제어")
+        if kind == "unavailable":
+            st.selectbox("축 범위", ["사용할 수 없음"], key=f"{prefix}_disabled", disabled=True)
+            st.caption("이 차트 유형에서는 해당 축을 직접 제어할 수 없습니다.")
+            return result
+        if kind == "numeric":
+            mode = st.selectbox(
+                "숫자축 설정",
+                ["전체", "최소값~최대값"],
+                key=f"{prefix}_numeric_mode",
+            )
+            result[f"{axis}_axis_mode"] = "numeric_range" if mode == "최소값~최대값" else "all"
+            if column and pd.api.types.is_numeric_dtype(frame[column]):
+                numeric = pd.to_numeric(frame[column], errors="coerce").dropna()
+                default_min = float(numeric.min()) if not numeric.empty else 0.0
+                default_max = float(numeric.max()) if not numeric.empty else 1.0
+            else:
+                default_min, default_max = 0.0, float(max(len(frame), 1))
+            if default_min >= default_max:
+                default_max = default_min + 1.0
+            minimum, maximum = st.columns(2)
+            result[f"{axis}_min"] = minimum.number_input(
+                "최소값",
+                value=default_min,
+                key=f"{prefix}_{column}_min",
+                disabled=mode == "전체",
+            ) if mode != "전체" else None
+            result[f"{axis}_max"] = maximum.number_input(
+                "최대값",
+                value=default_max,
+                key=f"{prefix}_{column}_max",
+                disabled=mode == "전체",
+            ) if mode != "전체" else None
+            interval_enabled = st.checkbox("눈금 간격 입력", key=f"{prefix}_interval_enabled")
+            result[f"{axis}_tick_interval"] = st.number_input(
+                "눈금 간격",
+                min_value=0.000001,
+                value=max((default_max - default_min) / 5, 0.000001),
+                key=f"{prefix}_{column}_interval",
+                disabled=not interval_enabled,
+            ) if interval_enabled else None
+            return result
+        values = list(dict.fromkeys(frame[column].dropna().astype(str).tolist())) if column else []
+        if not values:
+            st.selectbox("범주축 설정", ["사용할 수 없음"], key=f"{prefix}_empty", disabled=True)
+            return result
+        mode = st.selectbox(
+            "범주축 설정",
+            ["전체", "시작값~종료값", "항목 직접 선택"],
+            key=f"{prefix}_{column}_category_mode",
+        )
+        if mode == "시작값~종료값":
+            result[f"{axis}_axis_mode"] = "category_range"
+            start_col, end_col = st.columns(2)
+            result[f"{axis}_category_start"] = start_col.selectbox(
+                "시작값", values, key=f"{prefix}_{column}_start"
+            )
+            result[f"{axis}_category_end"] = end_col.selectbox(
+                "종료값", values, index=len(values) - 1, key=f"{prefix}_{column}_end"
+            )
+        elif mode == "항목 직접 선택":
+            result[f"{axis}_axis_mode"] = "category_select"
+            result[f"{axis}_selected_categories"] = st.multiselect(
+                "표시할 항목", values, default=values, key=f"{prefix}_{column}_selected"
+            )
+        return result
+
+
+def _deep_controls(index: int, basic: dict, frame: pd.DataFrame) -> DeepSettings:
     prefix = f"viz_{index}_deep"
-    x_min = _number_or_none("X축 최소", f"{prefix}_xmin")
-    x_max = _number_or_none("X축 최대", f"{prefix}_xmax")
-    y_min = _number_or_none("Y축 최소", f"{prefix}_ymin")
-    y_max = _number_or_none("Y축 최대", f"{prefix}_ymax")
+    chart_type = basic["chart_type"]
+    x_kind, x_column = _axis_kind(frame, basic, "x")
+    y_kind, y_column = _axis_kind(frame, basic, "y")
+    x_col, y_col = st.columns(2)
+    with x_col:
+        x_axis = _axis_controls(index, "x", x_kind, x_column, frame)
+    with y_col:
+        y_axis = _axis_controls(index, "y", y_kind, y_column, frame)
     c5, c6, c7, c8 = st.columns(4)
-    x_log = c5.checkbox("X 로그 스케일", False, key=f"{prefix}_xlog")
-    y_log = c6.checkbox("Y 로그 스케일", False, key=f"{prefix}_ylog")
-    invert_x = c7.checkbox("X축 반전", False, key=f"{prefix}_invertx")
-    invert_y = c8.checkbox("Y축 반전", False, key=f"{prefix}_inverty")
+    x_log = c5.checkbox("X 로그 스케일", False, key=f"{prefix}_xlog", disabled=x_kind != "numeric")
+    y_log = c6.checkbox("Y 로그 스케일", False, key=f"{prefix}_ylog", disabled=y_kind != "numeric")
+    invert_x = c7.checkbox("X축 반전", False, key=f"{prefix}_invertx", disabled=x_kind == "unavailable")
+    invert_y = c8.checkbox("Y축 반전", False, key=f"{prefix}_inverty", disabled=y_kind == "unavailable")
+    if x_kind != "numeric":
+        x_log = False
+    if y_kind != "numeric":
+        y_log = False
+    if x_kind == "unavailable":
+        invert_x = False
+    if y_kind == "unavailable":
+        invert_y = False
     c9, c10, c11 = st.columns(3)
     reference_line = _number_or_none("기준선", f"{prefix}_reference")
     normalize = c10.checkbox("정규화", False, key=f"{prefix}_normalize")
@@ -292,10 +426,8 @@ def _deep_controls(index: int, chart_type: str) -> DeepSettings:
     elif chart_type == "heatmap":
         heatmap_center = _number_or_none("색상 중심점", f"{prefix}_center")
     return DeepSettings(
-        x_min=x_min,
-        x_max=x_max,
-        y_min=y_min,
-        y_max=y_max,
+        **x_axis,
+        **y_axis,
         x_log=x_log,
         y_log=y_log,
         invert_x=invert_x,
@@ -324,7 +456,7 @@ def _structured_specs(frame: pd.DataFrame, chart_count: int) -> list[ChartSpec]:
         with st.expander("Advanced1 · 고급 설정", expanded=False):
             advanced = _advanced_controls(index, basic["chart_type"])
         with st.expander("Advanced2 · 심화 설정", expanded=False):
-            deep = _deep_controls(index, basic["chart_type"])
+            deep = _deep_controls(index, basic, frame)
         specs.append(ChartSpec.model_validate({**basic, "advanced": advanced, "deep": deep}))
     return specs
 

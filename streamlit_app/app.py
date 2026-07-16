@@ -82,18 +82,21 @@ with st.container(border=True):
 if has_dataset():
     df = st.session_state.df
     df_clean = st.session_state.df_clean
+    if st.session_state.basic_profile is None:
+        st.session_state.basic_profile = build_basic_profile(df)
+    basic_profile = st.session_state.basic_profile
     st.subheader("2. 데이터 기본 현황")
     metric_columns = st.columns(4)
     metric_columns[0].metric("파일명", st.session_state.source_filename)
     metric_columns[1].metric("행", f"{len(df):,}")
     metric_columns[2].metric("변수", f"{df.shape[1]:,}")
-    metric_columns[3].metric("전체 결측", f"{int(df.isna().sum().sum()):,}")
+    metric_columns[3].metric("전체 결측", f"{int(basic_profile['결측 개수'].sum()):,}")
 
     st.caption(
         "원본 `df`와 분석용 `df_clean`을 서로 다른 복사본으로 보관하고 있습니다. "
         "이 화면의 현황은 원본 `df` 기준입니다."
     )
-    st.dataframe(build_basic_profile(df), width="stretch", hide_index=True)
+    st.dataframe(basic_profile, width="stretch", hide_index=True)
 
     with st.expander("원본 데이터 미리보기", expanded=False):
         st.dataframe(df.head(20), width="stretch")

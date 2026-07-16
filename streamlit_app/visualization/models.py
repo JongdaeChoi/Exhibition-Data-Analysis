@@ -25,7 +25,8 @@ class Aggregation(str, Enum):
 class AdvancedSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sort: Literal["none", "ascending", "descending"] = "descending"
+    x_sort: Literal["none", "ascending", "descending"] = "none"
+    y_sort: Literal["none", "ascending", "descending"] = "none"
     top_n: int | None = Field(default=20, ge=1, le=500)
     include_missing: bool = False
     orientation: Literal["vertical", "horizontal"] = "vertical"
@@ -51,6 +52,7 @@ class AdvancedSettings(BaseModel):
     marker: str = "o"
     marker_size: float = Field(default=5.0, ge=1.0, le=30.0)
     area_fill: bool = False
+    line_curvature: float = Field(default=0.0, ge=0.0, le=1.0)
     pie_start_angle: int = Field(default=90, ge=0, le=360)
     donut: bool = False
     pie_shadow: bool = False
@@ -70,6 +72,16 @@ class DeepSettings(BaseModel):
     x_max: float | None = None
     y_min: float | None = None
     y_max: float | None = None
+    x_axis_mode: Literal["all", "numeric_range", "category_range", "category_select"] = "all"
+    y_axis_mode: Literal["all", "numeric_range", "category_range", "category_select"] = "all"
+    x_tick_interval: float | None = Field(default=None, gt=0)
+    y_tick_interval: float | None = Field(default=None, gt=0)
+    x_category_start: str | None = None
+    x_category_end: str | None = None
+    y_category_start: str | None = None
+    y_category_end: str | None = None
+    x_selected_categories: list[str] = Field(default_factory=list)
+    y_selected_categories: list[str] = Field(default_factory=list)
     x_log: bool = False
     y_log: bool = False
     invert_x: bool = False
@@ -84,6 +96,26 @@ class DeepSettings(BaseModel):
     show_correlation: bool = False
     highlight_outliers: bool = False
     heatmap_center: float | None = None
+
+    @model_validator(mode="after")
+    def validate_axis_controls(self):
+        for axis in ("x", "y"):
+            mode = getattr(self, f"{axis}_axis_mode")
+            minimum = getattr(self, f"{axis}_min")
+            maximum = getattr(self, f"{axis}_max")
+            if mode == "numeric_range":
+                if minimum is None or maximum is None:
+                    raise ValueError(f"{axis.upper()}축 최소값과 최대값을 모두 입력하세요.")
+                if minimum >= maximum:
+                    raise ValueError(f"{axis.upper()}축 최소값은 최대값보다 작아야 합니다.")
+            if mode == "category_range" and (
+                getattr(self, f"{axis}_category_start") is None
+                or getattr(self, f"{axis}_category_end") is None
+            ):
+                raise ValueError(f"{axis.upper()}축 범주의 시작값과 종료값을 선택하세요.")
+            if mode == "category_select" and not getattr(self, f"{axis}_selected_categories"):
+                raise ValueError(f"{axis.upper()}축에 표시할 항목을 하나 이상 선택하세요.")
+        return self
 
 
 class ChartSpec(BaseModel):

@@ -150,6 +150,18 @@ def apply_missing_plan(frame: pd.DataFrame, operations: Iterable[dict[str, Any]]
     return OperationResult(result, affected, f"{applied:,}개 컬럼의 결측값 {affected:,}개를 처리했습니다.")
 
 
+def missing_operations_from_editor(editor_table: pd.DataFrame) -> list[dict[str, Any]]:
+    """Translate editable UI rows into operations, inferring '특정값' from entered values."""
+    required = {"변수명", "처리방법", "처리값"}
+    if not required.issubset(editor_table.columns):
+        raise PreprocessingError("결측값 처리 테이블 형식이 올바르지 않습니다.")
+    prepared = editor_table.copy()
+    entered = prepared["처리값"].map(lambda value: value is not None and bool(str(value).strip()))
+    prepared.loc[entered & prepared["처리방법"].eq("처리 안 함"), "처리방법"] = "특정값"
+    selected = prepared.loc[prepared["처리방법"] != "처리 안 함"]
+    return selected.to_dict(orient="records")
+
+
 def replace_multiple_values(
     frame: pd.DataFrame,
     column: str,

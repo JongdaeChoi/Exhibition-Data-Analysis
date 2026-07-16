@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from data.loader import LoadedDataset
+from data.profiler import build_basic_profile
 
 
 SESSION_DEFAULTS = {
@@ -11,6 +12,7 @@ SESSION_DEFAULTS = {
     "df_clean": None,
     "source_filename": None,
     "load_source": None,
+    "basic_profile": None,
     "preprocessing_notice": None,
     "preprocessing_section": "결측값",
     "preprocessing_revision": 0,
@@ -32,6 +34,7 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.df_clean = dataset.df_clean.copy(deep=True)
     st.session_state.source_filename = dataset.filename
     st.session_state.load_source = source
+    st.session_state.basic_profile = build_basic_profile(st.session_state.df)
     st.session_state.preprocessing_notice = None
     st.session_state.preprocessing_section = "결측값"
     st.session_state.preprocessing_revision = 0

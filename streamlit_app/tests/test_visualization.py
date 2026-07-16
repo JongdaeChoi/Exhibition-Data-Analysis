@@ -77,3 +77,50 @@ def test_text_request_uses_variables_in_sentence_order(sample_frame: pd.DataFram
 
 def test_automatic_chart_title_uses_selected_variable_names_once() -> None:
     assert automatic_chart_title("국가", None, "지역", "매출", "국가") == "국가 · 지역 · 매출"
+
+
+def test_axis_value_sorting_and_category_selection(sample_frame: pd.DataFrame) -> None:
+    sorted_spec = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        advanced={"x_sort": "ascending", "y_sort": "descending", "top_n": None},
+    )
+    sorted_table = build_statistics(sample_frame, sorted_spec)
+    assert sorted_table["국가"].tolist() == ["미국", "일본", "한국"]
+
+    selected_spec = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        deep={"x_axis_mode": "category_select", "x_selected_categories": ["한국"]},
+    )
+    selected_table = build_statistics(sample_frame, selected_spec)
+    assert selected_table["국가"].tolist() == ["한국"]
+
+
+def test_grouped_bar_value_labels_line_curvature_and_numeric_axis(sample_frame: pd.DataFrame) -> None:
+    grouped = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        group="연도",
+        show_values=True,
+        advanced={"bar_mode": "grouped", "top_n": None},
+    )
+    grouped_result = build_visualization(sample_frame, [grouped], FigureSpec(grid_size=1))
+    assert any(text.get_text() for text in grouped_result.figure.axes[0].texts)
+
+    curved = ChartSpec(
+        chart_type="line",
+        x="매출",
+        aggregation="count",
+        advanced={"line_curvature": 0.8, "x_sort": "ascending", "top_n": None},
+        deep={
+            "y_axis_mode": "numeric_range",
+            "y_min": 0,
+            "y_max": 100,
+            "y_tick_interval": 20,
+        },
+    )
+    curved_result = build_visualization(sample_frame, [curved], FigureSpec(grid_size=1))
+    axis = curved_result.figure.axes[0]
+    assert max(len(line.get_xdata()) for line in axis.lines) > sample_frame["매출"].nunique()
+    assert axis.get_ylim() == pytest.approx((0, 100))

@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
+from matplotlib.container import BarContainer
+from matplotlib.ticker import MultipleLocator
 
 from visualization.models import ChartSpec
 
@@ -26,6 +28,29 @@ def _format_value(value: float, spec: ChartSpec) -> str:
         return f"{value:,.1f}{suffix}"
 
 
+def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple[np.ndarray, np.ndarray]:
+    if curvature <= 0 or len(x) < 3:
+        return x, y
+    dense_x: list[float] = []
+    dense_y: list[float] = []
+    for index in range(len(x) - 1):
+        t = np.linspace(0.0, 1.0, 24, endpoint=index == len(x) - 2)
+        y0 = y[max(index - 1, 0)]
+        y1 = y[index]
+        y2 = y[index + 1]
+        y3 = y[min(index + 2, len(y) - 1)]
+        catmull = 0.5 * (
+            (2 * y1)
+            + (-y0 + y2) * t
+            + (2 * y0 - 5 * y1 + 4 * y2 - y3) * t**2
+            + (-y0 + 3 * y1 - 3 * y2 + y3) * t**3
+        )
+        linear = y1 + (y2 - y1) * t
+        dense_x.extend((x[index] + (x[index + 1] - x[index]) * t).tolist())
+        dense_y.extend(((1 - curvature) * linear + curvature * catmull).tolist())
+    return np.asarray(dense_x), np.asarray(dense_y)
+
+
 def _apply_common(ax: Axes, spec: ChartSpec) -> None:
     ax.set_title(spec.title or f"{spec.x} {spec.chart_type.value}", fontsize=spec.advanced.title_size, fontweight="bold")
     ax.set_xlabel(spec.x_label or spec.x, fontsize=spec.advanced.axis_size)
@@ -41,6 +66,10 @@ def _apply_common(ax: Axes, spec: ChartSpec) -> None:
         ax.set_xlim(left=spec.deep.x_min, right=spec.deep.x_max)
     if spec.deep.y_min is not None or spec.deep.y_max is not None:
         ax.set_ylim(bottom=spec.deep.y_min, top=spec.deep.y_max)
+    if spec.deep.x_tick_interval is not None:
+        ax.xaxis.set_major_locator(MultipleLocator(spec.deep.x_tick_interval))
+    if spec.deep.y_tick_interval is not None:
+        ax.yaxis.set_major_locator(MultipleLocator(spec.deep.y_tick_interval))
     if spec.deep.x_log:
         ax.set_xscale("log")
     if spec.deep.y_log:
@@ -55,7 +84,7 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     group = spec.group if spec.group and spec.group in table else None
     horizontal = spec.advanced.orientation == "horizontal"
     if group:
-        pivot = table.pivot_table(index=spec.x, columns=group, values="값", aggfunc="sum", fill_value=0)
+        pivot = table.pivot_table(index=spec.x, columns=group, values="값", aggfunc="sum", fill_value=0, sort=False)
         colors = _palette(spec.advanced.palette, pivot.shape[1])
         pivot.plot(
             kind="barh" if horizontal else "bar",
@@ -66,6 +95,19 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             edgecolor=spec.advanced.edge_color,
             linewidth=spec.advanced.edge_width,
         )
+        if spec.show_values:
+            stacked = spec.advanced.bar_mode in {"stacked", "stacked_100"}
+            for container in ax.containers:
+                if isinstance(container, BarContainer):
+                    values = [bar.get_width() if horizontal else bar.get_height() for bar in container]
+                    labels = [_format_value(value, spec) if value else "" for value in values]
+                    ax.bar_label(
+                        container,
+                        labels=labels,
+                        label_type="center" if stacked else "edge",
+                        padding=0 if stacked else 3,
+                        fontsize=8,
+                    )
     else:
         labels = table[spec.x].astype(str)
         values = table["값"].to_numpy()
@@ -85,29 +127,66 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
 def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     groups = table.groupby(spec.group, dropna=False) if spec.group else [(None, table)]
     colors = _palette(spec.advanced.palette, table[spec.group].nunique() if spec.group else 1)
+    categorical_labels = None
+    if spec.advanced.line_curvature > 0 and not pd.api.types.is_numeric_dtype(table[spec.x]):
+        categorical_labels = list(dict.fromkeys(table[spec.x].astype(str).tolist()))
+        category_positions = {label: position for position, label in enumerate(categorical_labels)}
     for color, (name, part) in zip(colors, groups):
         x_values = part[spec.x]
         y_values = part["값"].to_numpy()
-        ax.plot(
-            x_values,
-            y_values,
-            label=str(name) if name is not None else None,
-            color=color if spec.group else spec.advanced.base_color,
-            linestyle=spec.advanced.line_style,
-            linewidth=spec.advanced.line_width,
-            marker=spec.advanced.marker,
-            markersize=spec.advanced.marker_size,
-            alpha=spec.advanced.alpha,
-        )
+        line_color = color if spec.group else spec.advanced.base_color
+        if spec.advanced.line_curvature > 0:
+            x_plot = (
+                np.asarray([category_positions[str(value)] for value in x_values], dtype=float)
+                if categorical_labels is not None
+                else pd.to_numeric(x_values, errors="coerce").to_numpy(dtype=float)
+            )
+            valid = np.isfinite(x_plot) & np.isfinite(y_values)
+            x_plot, y_plot = x_plot[valid], y_values[valid]
+            smooth_x, smooth_y = _smooth_coordinates(x_plot, y_plot, spec.advanced.line_curvature)
+            ax.plot(
+                smooth_x,
+                smooth_y,
+                label=str(name) if name is not None else None,
+                color=line_color,
+                linestyle=spec.advanced.line_style,
+                linewidth=spec.advanced.line_width,
+                alpha=spec.advanced.alpha,
+            )
+            ax.plot(
+                x_plot,
+                y_plot,
+                linestyle="",
+                marker=spec.advanced.marker,
+                markersize=spec.advanced.marker_size,
+                color=line_color,
+                alpha=spec.advanced.alpha,
+            )
+        else:
+            x_plot, y_plot = x_values, y_values
+            smooth_x, smooth_y = x_values, y_values
+            ax.plot(
+                x_values,
+                y_values,
+                label=str(name) if name is not None else None,
+                color=line_color,
+                linestyle=spec.advanced.line_style,
+                linewidth=spec.advanced.line_width,
+                marker=spec.advanced.marker,
+                markersize=spec.advanced.marker_size,
+                alpha=spec.advanced.alpha,
+            )
         if spec.advanced.area_fill:
             try:
-                ax.fill_between(x_values, y_values, alpha=0.14, color=color)
+                ax.fill_between(smooth_x, smooth_y, alpha=0.14, color=line_color)
             except (TypeError, ValueError):
                 # Categorical axes are positioned at 0..n-1 by Matplotlib.
-                ax.fill_between(range(len(part)), y_values, alpha=0.14, color=color)
+                ax.fill_between(range(len(part)), y_values, alpha=0.14, color=line_color)
         if spec.show_values:
-            for x, y in zip(x_values, y_values):
+            for x, y in zip(x_plot, y_plot):
                 ax.annotate(_format_value(y, spec), (x, y), xytext=(0, 5), textcoords="offset points", ha="center", fontsize=7)
+    if categorical_labels is not None:
+        ax.set_xticks(range(len(categorical_labels)), categorical_labels)
     _apply_common(ax, spec)
     if spec.group and spec.advanced.legend:
         ax.legend(loc=spec.advanced.legend_location, fontsize=8)
@@ -196,7 +275,7 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
 
 
 def render_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
-    matrix = table.pivot_table(index=spec.y, columns=spec.x, values="값", aggfunc="sum", fill_value=0)
+    matrix = table.pivot_table(index=spec.y, columns=spec.x, values="값", aggfunc="sum", fill_value=0, sort=False)
     sns.heatmap(
         matrix,
         ax=ax,

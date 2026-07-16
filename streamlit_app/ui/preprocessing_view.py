@@ -10,6 +10,7 @@ from data.preprocessing import (
     comparison_summary,
     date_column_candidates,
     drop_columns,
+    missing_operations_from_editor,
     missing_value_summary,
     paginate,
     replace_multiple_values,
@@ -52,16 +53,16 @@ def _render_missing(frame: pd.DataFrame) -> None:
         },
         key=f"missing_editor_{revision}",
     )
-    selected = edited.loc[edited["처리방법"] != "처리 안 함"]
+    operations = missing_operations_from_editor(edited)
     if st.button(
-        f"선택한 결측값 처리 ({len(selected):,}개 컬럼)",
+        f"선택한 결측값 처리 ({len(operations):,}개 컬럼)",
         type="primary",
         key="run_missing_plan",
-        disabled=selected.empty,
+        disabled=not operations,
         width="stretch",
     ):
         try:
-            _apply_result(apply_missing_plan(frame, selected.to_dict(orient="records")))
+            _apply_result(apply_missing_plan(frame, operations))
         except (PreprocessingError, ValueError, TypeError) as exc:
             st.error(str(exc))
 

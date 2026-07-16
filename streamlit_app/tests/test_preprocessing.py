@@ -9,6 +9,7 @@ from data.preprocessing import (
     drop_columns,
     fill_missing_values,
     missing_value_summary,
+    missing_operations_from_editor,
     paginate,
     replace_multiple_values,
     split_date_components,
@@ -81,6 +82,20 @@ def test_batch_missing_plan_and_multiple_replacements_preserve_input():
     assert replaced.frame["category"].tolist() == ["통합", "미입력", "통합"]
     assert replaced.frame["value"].tolist() == [1.0, 2.0, 3.0]
     assert pd.isna(frame.loc[1, "category"])
+
+
+def test_entered_missing_value_automatically_enables_specific_value_operation():
+    editor = pd.DataFrame(
+        {
+            "변수명": ["category", "value"],
+            "처리방법": ["처리 안 함", "처리 안 함"],
+            "처리값": ["미입력", ""],
+        }
+    )
+    operations = missing_operations_from_editor(editor)
+    assert len(operations) == 1
+    assert operations[0]["변수명"] == "category"
+    assert operations[0]["처리방법"] == "특정값"
 
 
 def test_multiple_replacements_do_not_cascade():

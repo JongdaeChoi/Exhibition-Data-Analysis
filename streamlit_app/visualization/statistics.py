@@ -66,6 +66,23 @@ def _working_data(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
         if spec.value_column and spec.aggregation in {Aggregation.SUM, Aggregation.MEAN}:
             required.append(spec.value_column)
         data = data.dropna(subset=required)
+    for axis, column in (("x", spec.x), ("y", spec.y)):
+        if not column:
+            continue
+        mode = getattr(spec.deep, f"{axis}_axis_mode")
+        display = data[column].map(str)
+        if mode == "category_select":
+            selected = getattr(spec.deep, f"{axis}_selected_categories")
+            data = data.loc[display.isin(selected)].copy()
+        elif mode == "category_range":
+            start = getattr(spec.deep, f"{axis}_category_start")
+            end = getattr(spec.deep, f"{axis}_category_end")
+            ordered = list(dict.fromkeys(display.tolist()))
+            if start not in ordered or end not in ordered:
+                raise VisualizationDataError(f"{axis.upper()}축 범주 범위를 현재 데이터에서 찾을 수 없습니다.")
+            start_index, end_index = ordered.index(start), ordered.index(end)
+            low, high = sorted((start_index, end_index))
+            data = data.loc[display.isin(ordered[low : high + 1])].copy()
     if data.empty:
         raise VisualizationDataError("선택 조건에 사용할 수 있는 데이터가 없습니다.")
     return data
@@ -73,11 +90,11 @@ def _working_data(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
 
 def _aggregate(data: pd.DataFrame, keys: list[str], spec: ChartSpec) -> pd.DataFrame:
     if spec.aggregation in {Aggregation.COUNT, Aggregation.RATIO}:
-        result = data.groupby(keys, dropna=False, observed=False).size().reset_index(name="값")
+        result = data.groupby(keys, dropna=False, observed=False, sort=False).size().reset_index(name="값")
     elif spec.aggregation == Aggregation.SUM:
-        result = data.groupby(keys, dropna=False, observed=False)[spec.value_column].sum().reset_index(name="값")
+        result = data.groupby(keys, dropna=False, observed=False, sort=False)[spec.value_column].sum().reset_index(name="값")
     else:
-        result = data.groupby(keys, dropna=False, observed=False)[spec.value_column].mean().reset_index(name="값")
+        result = data.groupby(keys, dropna=False, observed=False, sort=False)[spec.value_column].mean().reset_index(name="값")
     if spec.aggregation == Aggregation.RATIO:
         total = float(result["값"].sum())
         result["값"] = result["값"] / total * 100 if total else 0.0
@@ -86,8 +103,19 @@ def _aggregate(data: pd.DataFrame, keys: list[str], spec: ChartSpec) -> pd.DataF
 
 def _sort_and_limit(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
     result = table.copy()
-    if spec.advanced.sort != "none" and "값" in result:
-        result = result.sort_values("값", ascending=spec.advanced.sort == "ascending")
+    sort_targets = []
+    x_target = spec.x if spec.x in result else "구간 중심" if "구간 중심" in result else None
+    if spec.advanced.x_sort != "none" and x_target:
+        sort_targets.append((x_target, spec.advanced.x_sort == "ascending"))
+    y_target = spec.y if spec.y and spec.y in result else "값"
+    if spec.advanced.y_sort != "none" and y_target in result and y_target != spec.x:
+        sort_targets.append((y_target, spec.advanced.y_sort == "ascending"))
+    for column, ascending in reversed(sort_targets):
+        try:
+            result = result.sort_values(column, ascending=ascending, kind="stable")
+        except TypeError:
+            order = result[column].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
+            result = result.loc[order]
     if spec.advanced.top_n:
         result = result.head(spec.advanced.top_n)
     return result.reset_index(drop=True)
@@ -106,7 +134,7 @@ def build_bar_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
 def build_line_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
     data = _working_data(frame, spec)
     keys = [spec.x] + ([spec.group] if spec.group else [])
-    table = _aggregate(data, keys, spec).sort_values(spec.x)
+    table = _sort_and_limit(_aggregate(data, keys, spec), spec)
     if spec.deep.cumulative:
         table["값"] = table.groupby(spec.group)["값"].cumsum() if spec.group else table["값"].cumsum()
     if spec.deep.moving_average:
@@ -164,7 +192,7 @@ def build_histogram_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataF
     )
     if mapping is not None:
         table.attrs["category_mapping"] = mapping
-    return table
+    return _sort_and_limit(table, spec)
 
 
 def build_scatter_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
@@ -181,7 +209,7 @@ def build_scatter_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFra
     if spec.deep.normalize and table["값"].max() != table["값"].min():
         table["값"] = (table["값"] - table["값"].min()) / (table["값"].max() - table["값"].min())
     table.attrs["category_mappings"] = mappings
-    return table
+    return _sort_and_limit(table, spec)
 
 
 def build_heatmap_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
@@ -190,7 +218,7 @@ def build_heatmap_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFra
     if spec.deep.normalize:
         totals = table.groupby(spec.x)["값"].transform("sum")
         table["값"] = np.where(totals.ne(0), table["값"] / totals * 100, 0.0)
-    return table
+    return _sort_and_limit(table, spec)
 
 
 BUILDERS = {
