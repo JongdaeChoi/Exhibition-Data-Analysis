@@ -62,8 +62,8 @@ def test_date_detection_and_selected_component_split():
     result = split_date_components(frame, "created", ["year_month_day", "month_day", "day", "hour"])
 
     assert candidates["변수명"].tolist() == ["created"]
-    assert result.frame["created_년월일"].tolist() == ["2026년-07월-15일", "2026년-08월-16일"]
-    assert result.frame["created_월일"].tolist() == ["07월-15일", "08월-16일"]
+    assert result.frame["created_년월일"].tolist() == ["2026년 07월 15일", "2026년 08월 16일"]
+    assert result.frame["created_월일"].tolist() == ["07월15일", "08월16일"]
     assert result.frame["created_일"].tolist() == ["15일", "16일"]
     assert result.frame["created_시간"].tolist() == ["09시", "17시"]
 
@@ -87,6 +87,24 @@ def test_multiple_replacements_do_not_cascade():
     frame = pd.DataFrame({"x": ["A", "B", "C"]})
     result = replace_multiple_values(frame, "x", [("A", "B"), ("B", "C")])
     assert result.frame["x"].tolist() == ["B", "C", "C"]
+
+
+def test_display_equivalent_unique_values_are_combined_after_processing():
+    frame = pd.DataFrame({"x": pd.Series([20, "20", 10, None], dtype="object")})
+    before = unique_value_counts(frame, "x").set_index("표시값")
+    assert before.loc["20", "개수"] == 2
+    assert before.loc["20", "데이터 타입"] == "int, str"
+
+    replaced = replace_multiple_values(frame, "x", [(10, "20")])
+    after = unique_value_counts(replaced.frame, "x").set_index("표시값")
+    assert after.loc["20", "개수"] == 3
+    assert after.index.tolist().count("20") == 1
+    assert all(isinstance(value, int) for value in replaced.frame["x"].dropna())
+
+    filled = fill_missing_values(replaced.frame, "x", "특정값", "20")
+    final = unique_value_counts(filled.frame, "x").set_index("표시값")
+    assert final.loc["20", "개수"] == 4
+    assert all(isinstance(value, int) for value in filled.frame["x"])
 
 
 def test_drop_selected_columns_and_reject_all_columns():

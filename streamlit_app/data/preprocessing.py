@@ -69,6 +69,9 @@ def fill_missing_values(
         raise PreprocessingError("지원하지 않는 결측값 처리방법입니다.")
 
     result.loc[mask, column] = replacement
+    if method == "특정값":
+        equivalent = result[column].map(_display_value).eq(_display_value(replacement))
+        result.loc[equivalent, column] = replacement
     return OperationResult(result, affected, f"결측값 {affected:,}개를 {replacement!r}(으)로 대체했습니다.")
 
 
@@ -90,9 +93,32 @@ def unique_value_counts(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     if column not in frame.columns:
         raise PreprocessingError(f"{column!r} 변수를 찾을 수 없습니다.")
     counts = frame[column].value_counts(dropna=False, sort=False)
-    table = pd.DataFrame(
-        {"값": counts.index.tolist(), "표시값": [_display_value(v) for v in counts.index], "개수": counts.values.astype(int)}
-    )
+    grouped: dict[str, dict[str, Any]] = {}
+    for value, count in counts.items():
+        display = _display_value(value)
+        if display not in grouped:
+            grouped[display] = {
+                "값": value,
+                "표시값": display,
+                "개수": int(count),
+                "_types": {type(value).__name__},
+            }
+        else:
+            grouped[display]["개수"] += int(count)
+            grouped[display]["_types"].add(type(value).__name__)
+            # Prefer a typed value as the canonical representative over an equivalent string.
+            if isinstance(grouped[display]["값"], str) and not isinstance(value, str):
+                grouped[display]["값"] = value
+    rows = [
+        {
+            "값": item["값"],
+            "표시값": item["표시값"],
+            "개수": item["개수"],
+            "데이터 타입": ", ".join(sorted(item["_types"])),
+        }
+        for item in grouped.values()
+    ]
+    table = pd.DataFrame(rows, columns=["값", "표시값", "개수", "데이터 타입"])
     missing = table["값"].map(_is_missing_scalar)
     non_missing = table.loc[~missing].copy()
     try:
@@ -137,15 +163,18 @@ def replace_multiple_values(
     result = frame.copy(deep=True)
     source = frame[column]
     combined_mask = pd.Series(False, index=frame.index)
-    seen: list[Any] = []
+    seen: set[str] = set()
     for old_value, new_value in operations:
-        if any((_is_missing_scalar(old_value) and _is_missing_scalar(item)) or old_value == item for item in seen):
+        old_display = _display_value(old_value)
+        if old_display in seen:
             raise PreprocessingError("같은 원본 값은 한 번만 변경할 수 있습니다.")
-        seen.append(old_value)
+        seen.add(old_display)
         if new_value is None or (isinstance(new_value, str) and not new_value.strip()):
             raise PreprocessingError("변경할 처리값을 입력하세요.")
-        mask = source.isna() if _is_missing_scalar(old_value) else source.eq(old_value)
-        result.loc[mask, column] = _coerce_for_series(new_value, source)
+        mask = source.isna() if _is_missing_scalar(old_value) else source.map(_display_value).eq(old_display)
+        replacement = _coerce_for_series(new_value, source)
+        target_mask = source.map(_display_value).eq(_display_value(replacement))
+        result.loc[mask | target_mask, column] = replacement
         combined_mask |= mask
     affected = int(combined_mask.sum())
     return OperationResult(result, affected, f"{len(operations):,}개 Unique Value, {affected:,}개 데이터를 변경했습니다.")
@@ -209,6 +238,13 @@ def _coerce_for_series(value: Any, series: pd.Series) -> Any:
         if pd.isna(parsed):
             raise PreprocessingError("날짜 형식으로 변환할 수 없는 값입니다.")
         return parsed
+    # Object columns can contain a typed number and its string representation.
+    # Reuse the existing typed value so a replacement such as "20" merges into 20.
+    display = _display_value(value).strip()
+    matches = [item for item in series.dropna().unique().tolist() if _display_value(item).strip() == display]
+    if matches:
+        matches.sort(key=lambda item: isinstance(item, str))
+        return matches[0]
     return value
 
 
@@ -250,9 +286,9 @@ def split_date_components(
     if valid == 0:
         raise PreprocessingError("유효한 날짜값을 찾을 수 없습니다.")
     if "year_month_day" in selected:
-        result[f"{column}_년월일"] = parsed.dt.strftime("%Y년-%m월-%d일")
+        result[f"{column}_년월일"] = parsed.dt.strftime("%Y년 %m월 %d일")
     if "month_day" in selected:
-        result[f"{column}_월일"] = parsed.dt.strftime("%m월-%d일")
+        result[f"{column}_월일"] = parsed.dt.strftime("%m월%d일")
     if "day" in selected:
         result[f"{column}_일"] = parsed.dt.strftime("%d일")
     if "hour" in selected:

@@ -78,7 +78,7 @@ def _render_replace(frame: pd.DataFrame) -> None:
     )
     page_table, total_pages = paginate(values, page)
     page_table = page_table.reset_index(drop=True)
-    editor_table = page_table[["표시값", "개수"]].copy()
+    editor_table = page_table[["표시값", "데이터 타입", "개수"]].copy()
     editor_table["처리값"] = ""
     st.caption(
         f"Unique Value 내림차순 · 총 {len(values):,}개 · {int(page)}/{total_pages} 페이지 · "
@@ -89,9 +89,13 @@ def _render_replace(frame: pd.DataFrame) -> None:
         editor_table,
         width="stretch",
         hide_index=True,
-        disabled=["표시값", "개수"],
+        disabled=["표시값", "데이터 타입", "개수"],
         column_config={
             "표시값": st.column_config.TextColumn("Unique Value"),
+            "데이터 타입": st.column_config.TextColumn(
+                "원본 데이터 타입",
+                help="같게 표시되는 값에 여러 타입이 있으면 함께 표시됩니다.",
+            ),
             "개수": st.column_config.NumberColumn("개수", format="%d"),
             "처리값": st.column_config.TextColumn("처리값", help="이 값으로 변경할 행에만 입력하세요."),
         },

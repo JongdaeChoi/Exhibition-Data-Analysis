@@ -31,6 +31,11 @@ class VisualizationResult:
     figure_spec: FigureSpec
 
 
+def automatic_chart_title(*columns: str | None) -> str:
+    selected = [column for column in columns if column and column not in {"(없음)"}]
+    return " · ".join(dict.fromkeys(selected))
+
+
 def _default_columns(frame: pd.DataFrame) -> tuple[str, str | None]:
     categorical = [str(c) for c in frame.columns if not pd.api.types.is_numeric_dtype(frame[c])]
     numeric = [str(c) for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]

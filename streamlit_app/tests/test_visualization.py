@@ -8,7 +8,7 @@ from pydantic import ValidationError
 matplotlib.use("Agg")
 
 from visualization.models import ChartSpec, FigureSpec
-from visualization.service import build_visualization, figure_to_bytes, parse_text_request, source_payload
+from visualization.service import automatic_chart_title, build_visualization, figure_to_bytes, parse_text_request, source_payload
 from visualization.statistics import build_statistics, variable_type_table
 
 
@@ -73,3 +73,7 @@ def test_text_request_uses_variables_in_sentence_order(sample_frame: pd.DataFram
     assert spec.x == "국가"
     assert spec.value_column == "매출"
     assert spec.aggregation.value == "sum"
+
+
+def test_automatic_chart_title_uses_selected_variable_names_once() -> None:
+    assert automatic_chart_title("국가", None, "지역", "매출", "국가") == "국가 · 지역 · 매출"

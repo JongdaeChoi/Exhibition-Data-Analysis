@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from visualization.models import AdvancedSettings, ChartSpec, DeepSettings, FigureSpec
 from visualization.service import (
+    automatic_chart_title,
     build_visualization,
     figure_to_bytes,
     parse_text_request,
@@ -120,7 +121,16 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
         key=f"{prefix}_group",
         disabled=not supports_group,
     )
-    title = c6.text_input("차트 제목", f"Chart {index}", key=f"{prefix}_title")
+    selected_y = y if requires_y else None
+    selected_group = None if group == NONE_OPTION or not supports_group else group
+    selected_value = None if value_column == NONE_OPTION or aggregation not in {"sum", "mean"} else value_column
+    title_key = f"{prefix}_title"
+    title_signature_key = f"{prefix}_title_variable_signature"
+    title_signature = (chart_type, x, selected_y, selected_group, selected_value)
+    if st.session_state.get(title_signature_key) != title_signature:
+        st.session_state[title_key] = automatic_chart_title(x, selected_y, selected_group, selected_value)
+        st.session_state[title_signature_key] = title_signature
+    title = c6.text_input("차트 제목", key=title_key)
     c7, c8 = st.columns(2)
     x_label = c7.text_input("X축 제목", x, key=f"{prefix}_xlabel")
     y_label = c8.text_input("Y축 제목", "값", key=f"{prefix}_ylabel")
@@ -128,9 +138,9 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
     return {
         "chart_type": chart_type,
         "x": x,
-        "y": y if requires_y else None,
-        "group": None if group == NONE_OPTION or not supports_group else group,
-        "value_column": None if value_column == NONE_OPTION or aggregation not in {"sum", "mean"} else value_column,
+        "y": selected_y,
+        "group": selected_group,
+        "value_column": selected_value,
         "aggregation": aggregation,
         "title": title,
         "x_label": x_label,
@@ -369,7 +379,12 @@ def render_visualization() -> None:
         horizontal=True,
         key="visualization_request_method",
     )
-    grid_size = st.number_input("subplot n×n의 n", 1, 3, 1, key="visualization_grid_size")
+    grid_size = st.selectbox(
+        "subplot 구성",
+        [1, 2, 3],
+        format_func=lambda size: f"{size} × {size}",
+        key="visualization_grid_size",
+    )
     chart_count = int(grid_size) ** 2
     figure_spec = _figure_controls(int(grid_size))
     try:
