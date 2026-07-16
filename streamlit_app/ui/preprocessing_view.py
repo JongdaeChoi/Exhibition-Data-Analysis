@@ -158,16 +158,21 @@ def render_preprocessing() -> None:
     if notice:
         st.success(notice)
     frame = st.session_state.df_clean
-    missing_tab, noise_tab, replace_tab, date_tab = st.tabs(
-        ["결측값", "노이즈", "특정값 변경", "날짜 변수 분리"]
+    section = st.radio(
+        "전처리 작업 선택",
+        ["결측값", "노이즈", "특정값 변경", "날짜 변수 분리"],
+        horizontal=True,
+        key="preprocessing_section",
+        help="변수나 값을 선택해 화면이 다시 계산되어도 현재 작업 화면이 유지됩니다.",
     )
-    with missing_tab:
+    st.divider()
+    if section == "결측값":
         _render_missing(frame)
-    with noise_tab:
+    elif section == "노이즈":
         _render_noise(frame)
-    with replace_tab:
+    elif section == "특정값 변경":
         _render_replace(frame)
-    with date_tab:
+    else:
         _render_date(frame)
 
     st.subheader("전처리 결과 요약")

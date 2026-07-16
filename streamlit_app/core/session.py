@@ -12,6 +12,7 @@ SESSION_DEFAULTS = {
     "source_filename": None,
     "load_source": None,
     "preprocessing_notice": None,
+    "preprocessing_section": "결측값",
 }
 
 
@@ -28,6 +29,7 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.source_filename = dataset.filename
     st.session_state.load_source = source
     st.session_state.preprocessing_notice = None
+    st.session_state.preprocessing_section = "결측값"
 
 
 def has_dataset() -> bool:
