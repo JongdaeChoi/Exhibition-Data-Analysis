@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -11,8 +10,8 @@ import pandas as pd
 
 PAGE_SIZE = 20
 DATE_COMPONENT_LABELS = {
-    "year_month": "년-월",
-    "month": "월",
+    "year_month_day": "년·월·일",
+    "month_day": "월·일",
     "day": "일",
     "hour": "시간",
 }
@@ -87,55 +86,82 @@ def _is_missing_scalar(value: Any) -> bool:
         return False
 
 
-def _string_normal_form(value: Any) -> str:
-    text = str(value)
-    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
-    return re.sub(r"\s+", " ", text).strip().casefold()
-
-
-def noise_candidates(frame: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Detect explainable string noise and low-frequency category candidates."""
-    if column not in frame.columns:
-        raise PreprocessingError(f"{column!r} 변수를 찾을 수 없습니다.")
-    series = frame[column].dropna()
-    if series.empty:
-        return pd.DataFrame(columns=["원본 값", "개수", "탐지 근거"])
-
-    counts = series.value_counts(dropna=False)
-    normalized_groups: dict[str, list[Any]] = {}
-    for value in counts.index:
-        if isinstance(value, str):
-            normalized_groups.setdefault(_string_normal_form(value), []).append(value)
-
-    rows = []
-    rare_limit = max(1, int(len(series) * 0.01))
-    categorical_enough = int(series.nunique()) <= max(100, int(len(series) * 0.5))
-    for value, count in counts.items():
-        reasons = []
-        if isinstance(value, str):
-            if not value.strip():
-                reasons.append("빈 문자열/공백")
-            if value != re.sub(r"\s+", " ", value).strip():
-                reasons.append("앞뒤·중복 공백")
-            if re.search(r"[\x00-\x1f\x7f]", value):
-                reasons.append("제어문자")
-            variants = normalized_groups.get(_string_normal_form(value), [])
-            if len(variants) > 1:
-                reasons.append("공백·대소문자 정규화 시 중복")
-        if categorical_enough and count <= rare_limit:
-            reasons.append(f"저빈도 값(전체의 1% 이하, {int(count):,}건)")
-        if reasons:
-            rows.append({"원본 값": value, "개수": int(count), "탐지 근거": ", ".join(reasons)})
-    return pd.DataFrame(rows, columns=["원본 값", "개수", "탐지 근거"])
-
-
 def unique_value_counts(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     if column not in frame.columns:
         raise PreprocessingError(f"{column!r} 변수를 찾을 수 없습니다.")
-    counts = frame[column].value_counts(dropna=False)
-    return pd.DataFrame(
+    counts = frame[column].value_counts(dropna=False, sort=False)
+    table = pd.DataFrame(
         {"값": counts.index.tolist(), "표시값": [_display_value(v) for v in counts.index], "개수": counts.values.astype(int)}
     )
+    missing = table["값"].map(_is_missing_scalar)
+    non_missing = table.loc[~missing].copy()
+    try:
+        non_missing = non_missing.sort_values("값", ascending=False, kind="stable")
+    except TypeError:
+        non_missing = non_missing.sort_values("표시값", ascending=False, kind="stable", key=lambda s: s.str.casefold())
+    return pd.concat([non_missing, table.loc[missing]], ignore_index=True)
+
+
+def apply_missing_plan(frame: pd.DataFrame, operations: Iterable[dict[str, Any]]) -> OperationResult:
+    result = frame.copy(deep=True)
+    affected = 0
+    applied = 0
+    for operation in operations:
+        method = str(operation.get("처리방법", "처리 안 함"))
+        if method == "처리 안 함":
+            continue
+        current = fill_missing_values(
+            result,
+            str(operation.get("변수명", "")),
+            method,
+            operation.get("처리값"),
+        )
+        result = current.frame
+        affected += current.affected_rows
+        applied += 1
+    if applied == 0:
+        raise PreprocessingError("처리할 컬럼의 처리방법을 선택하세요.")
+    return OperationResult(result, affected, f"{applied:,}개 컬럼의 결측값 {affected:,}개를 처리했습니다.")
+
+
+def replace_multiple_values(
+    frame: pd.DataFrame,
+    column: str,
+    replacements: Iterable[tuple[Any, Any]],
+) -> OperationResult:
+    if column not in frame.columns:
+        raise PreprocessingError(f"{column!r} 변수를 찾을 수 없습니다.")
+    operations = list(replacements)
+    if not operations:
+        raise PreprocessingError("테이블의 처리값을 하나 이상 입력하세요.")
+    result = frame.copy(deep=True)
+    source = frame[column]
+    combined_mask = pd.Series(False, index=frame.index)
+    seen: list[Any] = []
+    for old_value, new_value in operations:
+        if any((_is_missing_scalar(old_value) and _is_missing_scalar(item)) or old_value == item for item in seen):
+            raise PreprocessingError("같은 원본 값은 한 번만 변경할 수 있습니다.")
+        seen.append(old_value)
+        if new_value is None or (isinstance(new_value, str) and not new_value.strip()):
+            raise PreprocessingError("변경할 처리값을 입력하세요.")
+        mask = source.isna() if _is_missing_scalar(old_value) else source.eq(old_value)
+        result.loc[mask, column] = _coerce_for_series(new_value, source)
+        combined_mask |= mask
+    affected = int(combined_mask.sum())
+    return OperationResult(result, affected, f"{len(operations):,}개 Unique Value, {affected:,}개 데이터를 변경했습니다.")
+
+
+def drop_columns(frame: pd.DataFrame, columns: Iterable[str]) -> OperationResult:
+    selected = list(dict.fromkeys(str(column) for column in columns))
+    if not selected:
+        raise PreprocessingError("삭제할 Column을 하나 이상 선택하세요.")
+    missing = [column for column in selected if column not in frame.columns]
+    if missing:
+        raise PreprocessingError("삭제할 Column을 찾을 수 없습니다: " + ", ".join(missing))
+    if len(selected) >= frame.shape[1]:
+        raise PreprocessingError("모든 Column을 삭제할 수는 없습니다.")
+    result = frame.drop(columns=selected).copy()
+    return OperationResult(result, len(selected), f"Column {len(selected):,}개를 삭제했습니다: {', '.join(selected)}")
 
 
 def paginate(table: pd.DataFrame, page: int, page_size: int = PAGE_SIZE) -> tuple[pd.DataFrame, int]:
@@ -223,10 +249,10 @@ def split_date_components(
     valid = int(parsed.notna().sum())
     if valid == 0:
         raise PreprocessingError("유효한 날짜값을 찾을 수 없습니다.")
-    if "year_month" in selected:
-        result[f"{column}_년월"] = parsed.dt.strftime("%Y년-%m월")
-    if "month" in selected:
-        result[f"{column}_월"] = parsed.dt.strftime("%m월")
+    if "year_month_day" in selected:
+        result[f"{column}_년월일"] = parsed.dt.strftime("%Y년-%m월-%d일")
+    if "month_day" in selected:
+        result[f"{column}_월일"] = parsed.dt.strftime("%m월-%d일")
     if "day" in selected:
         result[f"{column}_일"] = parsed.dt.strftime("%d일")
     if "hour" in selected:

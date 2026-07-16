@@ -6,13 +6,13 @@ import streamlit as st
 from data.preprocessing import (
     DATE_COMPONENT_LABELS,
     PreprocessingError,
+    apply_missing_plan,
     comparison_summary,
     date_column_candidates,
-    fill_missing_values,
+    drop_columns,
     missing_value_summary,
-    noise_candidates,
     paginate,
-    replace_selected_value,
+    replace_multiple_values,
     split_date_components,
     to_csv_bytes,
     to_excel_bytes,
@@ -20,118 +20,103 @@ from data.preprocessing import (
 )
 
 
+SECTIONS = ["결측값", "특정값 변경", "날짜 변수 분리", "Column 삭제"]
+MISSING_METHODS = ["처리 안 함", "특정값", "평균값", "중앙값", "해당 행 삭제"]
+
+
 def _apply_result(result) -> None:
     st.session_state.df_clean = result.frame
     st.session_state.preprocessing_notice = result.message
+    st.session_state.preprocessing_revision = int(st.session_state.get("preprocessing_revision", 0)) + 1
     st.rerun()
 
 
-def _value_selector(table: pd.DataFrame, label: str, key: str, value_column: str):
-    records = table.to_dict(orient="records")
-    if not records:
-        return None
-    options = list(range(len(records)))
-    selected_index = st.selectbox(
-        label,
-        options,
-        format_func=lambda i: f"{records[i].get('표시값', records[i][value_column])} ({records[i]['개수']:,}건)",
-        key=key,
-    )
-    return records[selected_index][value_column]
-
-
-def _render_current_unique_values(
-    frame: pd.DataFrame,
-    column: str,
-    key_prefix: str,
-) -> None:
-    values = unique_value_counts(frame, column)
-    page_count = max(1, (len(values) + 19) // 20)
-    page = st.selectbox(
-        "현재 Unique Value 조회 페이지",
-        options=list(range(1, page_count + 1)),
-        key=f"{key_prefix}_unique_page",
-    )
-    page_table, total_pages = paginate(values, page)
-    st.caption(
-        f"현재 Unique Value {len(values):,}개 · {int(page)}/{total_pages} 페이지 · "
-        "페이지당 20개 · 처리 후 자동 갱신"
-    )
-    st.dataframe(page_table[["표시값", "개수"]], width="stretch", hide_index=True)
-
-
 def _render_missing(frame: pd.DataFrame) -> None:
-    st.dataframe(missing_value_summary(frame), width="stretch", hide_index=True)
-    column = st.selectbox("변수", frame.columns, key="missing_column")
-    missing_count = int(frame[column].isna().sum())
-    if missing_count == 0:
-        st.info(f"{column} 변수에는 현재 결측값이 없습니다.")
-    else:
-        methods = ["특정값", "해당 행 삭제"]
-        if pd.api.types.is_numeric_dtype(frame[column]):
-            methods[1:1] = ["평균값", "중앙값"]
-        method = st.selectbox("처리방법", methods, key="missing_method")
-        value = st.text_input("기입할 특정값", key="missing_value") if method == "특정값" else None
-        if st.button("결측값 처리 실행", type="primary", key="run_missing"):
-            try:
-                _apply_result(fill_missing_values(frame, column, method, value))
-            except (PreprocessingError, ValueError) as exc:
-                st.error(str(exc))
-    st.markdown("#### 선택 변수의 현재 Unique Value")
-    _render_current_unique_values(frame, column, "missing")
-
-
-def _render_noise(frame: pd.DataFrame) -> None:
-    column = st.selectbox("변수", frame.columns, key="noise_column")
-    candidates = noise_candidates(frame, column)
-    if candidates.empty:
-        st.info("공백·표기 충돌·저빈도 규칙으로 탐지된 노이즈 후보가 없습니다.")
-    else:
-        page_count = max(1, (len(candidates) + 19) // 20)
-        page = st.selectbox(
-            "노이즈 후보 조회 페이지",
-            options=list(range(1, page_count + 1)),
-            key="noise_page",
-        )
-        page_table, total_pages = paginate(candidates, page)
-        st.caption(f"총 {len(candidates):,}개 후보 · {int(page)}/{total_pages} 페이지 · 페이지당 20개")
-        st.dataframe(page_table, width="stretch", hide_index=True)
-        selected = _value_selector(page_table, "처리할 노이즈", "noise_selected", "원본 값")
-        replacement = st.text_input("변경할 특정값", key="noise_replacement")
-        if st.button("노이즈 처리 실행", type="primary", key="run_noise"):
-            try:
-                _apply_result(replace_selected_value(frame, column, selected, replacement))
-            except (PreprocessingError, ValueError) as exc:
-                st.error(str(exc))
-    st.markdown("#### 선택 변수의 현재 Unique Value")
-    _render_current_unique_values(frame, column, "noise")
+    st.markdown("#### 결측값 일괄 처리")
+    st.caption("처리할 컬럼의 처리방법을 선택하고, ‘특정값’인 경우 같은 행의 처리값을 입력하세요.")
+    table = missing_value_summary(frame)
+    table["처리방법"] = "처리 안 함"
+    table["처리값"] = ""
+    revision = st.session_state.get("preprocessing_revision", 0)
+    edited = st.data_editor(
+        table,
+        width="stretch",
+        hide_index=True,
+        disabled=["변수명", "결측 개수", "결측률(%)"],
+        column_config={
+            "변수명": st.column_config.TextColumn("변수명"),
+            "결측 개수": st.column_config.NumberColumn("결측 개수", format="%d"),
+            "결측률(%)": st.column_config.NumberColumn("결측률(%)", format="%.2f%%"),
+            "처리방법": st.column_config.SelectboxColumn("처리방법", options=MISSING_METHODS, required=True),
+            "처리값": st.column_config.TextColumn("처리값", help="처리방법이 ‘특정값’일 때 입력합니다."),
+        },
+        key=f"missing_editor_{revision}",
+    )
+    selected = edited.loc[edited["처리방법"] != "처리 안 함"]
+    if st.button(
+        f"선택한 결측값 처리 ({len(selected):,}개 컬럼)",
+        type="primary",
+        key="run_missing_plan",
+        disabled=selected.empty,
+        width="stretch",
+    ):
+        try:
+            _apply_result(apply_missing_plan(frame, selected.to_dict(orient="records")))
+        except (PreprocessingError, ValueError, TypeError) as exc:
+            st.error(str(exc))
 
 
 def _render_replace(frame: pd.DataFrame) -> None:
+    st.markdown("#### Unique Value 일괄 변경")
     column = st.selectbox("변수", frame.columns, key="replace_column")
     values = unique_value_counts(frame, column)
     page_count = max(1, (len(values) + 19) // 20)
     page = st.selectbox(
-        "현재 Unique Value 조회 페이지",
+        "Unique Value 조회 페이지",
         options=list(range(1, page_count + 1)),
         key="replace_page",
     )
     page_table, total_pages = paginate(values, page)
+    page_table = page_table.reset_index(drop=True)
+    editor_table = page_table[["표시값", "개수"]].copy()
+    editor_table["처리값"] = ""
     st.caption(
-        f"현재 Unique Value {len(values):,}개 · {int(page)}/{total_pages} 페이지 · "
-        "페이지당 20개 · 처리 후 자동 갱신"
+        f"Unique Value 내림차순 · 총 {len(values):,}개 · {int(page)}/{total_pages} 페이지 · "
+        "페이지당 20개 · 입력하지 않은 행은 변경하지 않음"
     )
-    st.dataframe(page_table[["표시값", "개수"]], width="stretch", hide_index=True)
-    selected = _value_selector(page_table, "변경할 값", "replace_selected", "값")
-    replacement = st.text_input("새로운 특정값", key="replace_value")
-    if st.button("특정값 변경 실행", type="primary", key="run_replace"):
+    revision = st.session_state.get("preprocessing_revision", 0)
+    edited = st.data_editor(
+        editor_table,
+        width="stretch",
+        hide_index=True,
+        disabled=["표시값", "개수"],
+        column_config={
+            "표시값": st.column_config.TextColumn("Unique Value"),
+            "개수": st.column_config.NumberColumn("개수", format="%d"),
+            "처리값": st.column_config.TextColumn("처리값", help="이 값으로 변경할 행에만 입력하세요."),
+        },
+        key=f"replace_editor_{column}_{page}_{revision}",
+    )
+    replacements = [
+        (page_table.iloc[index]["값"], replacement)
+        for index, replacement in enumerate(edited["처리값"].tolist())
+        if replacement is not None and str(replacement).strip()
+    ]
+    if st.button(
+        f"입력한 특정값 변경 ({len(replacements):,}개)",
+        type="primary",
+        key="run_replace_plan",
+        disabled=not replacements,
+        width="stretch",
+    ):
         try:
-            _apply_result(replace_selected_value(frame, column, selected, replacement))
-        except (PreprocessingError, ValueError) as exc:
+            _apply_result(replace_multiple_values(frame, column, replacements))
+        except (PreprocessingError, ValueError, TypeError) as exc:
             st.error(str(exc))
 
 
 def _render_date(frame: pd.DataFrame) -> None:
+    st.markdown("#### 날짜 파생변수 생성")
     candidates = date_column_candidates(frame)
     st.dataframe(candidates, width="stretch", hide_index=True)
     if candidates.empty:
@@ -143,11 +128,41 @@ def _render_date(frame: pd.DataFrame) -> None:
         list(DATE_COMPONENT_LABELS),
         format_func=lambda item: DATE_COMPONENT_LABELS[item],
         key="date_components",
+        help="년·월·일, 월·일, 일, 시간을 필요한 만큼 선택할 수 있습니다.",
     )
-    if st.button("날짜 변수 분리 실행", type="primary", key="run_date"):
+    if st.button(
+        "날짜 변수 분리 실행",
+        type="primary",
+        key="run_date",
+        disabled=not components,
+        width="stretch",
+    ):
         try:
             _apply_result(split_date_components(frame, column, components))
         except (PreprocessingError, ValueError) as exc:
+            st.error(str(exc))
+
+
+def _render_drop_columns(frame: pd.DataFrame) -> None:
+    st.markdown("#### Column 삭제")
+    st.warning("선택한 Column은 분석용 `df_clean`에서만 삭제됩니다. 원본 `df`에는 남아 있습니다.")
+    selected = st.multiselect("삭제할 Column", list(frame.columns), key="drop_columns")
+    if selected:
+        remaining = frame.shape[1] - len(selected)
+        metric_columns = st.columns(3)
+        metric_columns[0].metric("현재 Column", f"{frame.shape[1]:,}")
+        metric_columns[1].metric("삭제 예정", f"{len(selected):,}")
+        metric_columns[2].metric("삭제 후", f"{remaining:,}")
+    if st.button(
+        "선택한 Column 삭제",
+        type="primary",
+        key="run_drop_columns",
+        disabled=not selected,
+        width="stretch",
+    ):
+        try:
+            _apply_result(drop_columns(frame, selected))
+        except PreprocessingError as exc:
             st.error(str(exc))
 
 
@@ -158,22 +173,24 @@ def render_preprocessing() -> None:
     if notice:
         st.success(notice)
     frame = st.session_state.df_clean
+    if st.session_state.get("preprocessing_section") not in SECTIONS:
+        st.session_state.preprocessing_section = "결측값"
     section = st.radio(
         "전처리 작업 선택",
-        ["결측값", "노이즈", "특정값 변경", "날짜 변수 분리"],
+        SECTIONS,
         horizontal=True,
         key="preprocessing_section",
-        help="변수나 값을 선택해 화면이 다시 계산되어도 현재 작업 화면이 유지됩니다.",
+        help="처리 후에도 현재 작업 화면을 유지하고 조회 테이블을 최신 상태로 갱신합니다.",
     )
     st.divider()
     if section == "결측값":
         _render_missing(frame)
-    elif section == "노이즈":
-        _render_noise(frame)
     elif section == "특정값 변경":
         _render_replace(frame)
-    else:
+    elif section == "날짜 변수 분리":
         _render_date(frame)
+    else:
+        _render_drop_columns(frame)
 
     st.subheader("전처리 결과 요약")
     st.dataframe(
@@ -183,6 +200,7 @@ def render_preprocessing() -> None:
     )
     if st.button("전처리 전체 초기화", key="reset_preprocessing"):
         st.session_state.df_clean = st.session_state.df.copy(deep=True)
+        st.session_state.preprocessing_revision = int(st.session_state.get("preprocessing_revision", 0)) + 1
         st.session_state.preprocessing_notice = "df_clean을 원본 상태로 초기화했습니다."
         st.rerun()
 
