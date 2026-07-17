@@ -124,3 +124,25 @@ def test_grouped_bar_value_labels_line_curvature_and_numeric_axis(sample_frame: 
     axis = curved_result.figure.axes[0]
     assert max(len(line.get_xdata()) for line in axis.lines) > sample_frame["매출"].nunique()
     assert axis.get_ylim() == pytest.approx((0, 100))
+
+
+def test_donut_orders_slices_and_legend_by_label_or_value() -> None:
+    frame = pd.DataFrame({"만족도": ["4", "5", "1", "3", "2", "4", "4", "5"]})
+    by_label = ChartSpec(
+        chart_type="pie",
+        x="만족도",
+        advanced={"donut": True, "pie_sort_by": "label", "pie_sort_direction": "ascending", "top_n": None},
+    )
+    label_table = build_statistics(frame, by_label)
+    assert label_table["만족도"].tolist() == ["1", "2", "3", "4", "5"]
+
+    by_value = ChartSpec(
+        chart_type="pie",
+        x="만족도",
+        advanced={"donut": True, "pie_sort_by": "value", "pie_sort_direction": "descending", "top_n": None},
+    )
+    value_table = build_statistics(frame, by_value)
+    assert value_table.iloc[0]["만족도"] == "4"
+    result = build_visualization(frame, [by_label], FigureSpec(grid_size=1))
+    legend_labels = [text.get_text() for text in result.figure.axes[0].get_legend().texts]
+    assert legend_labels == ["1", "2", "3", "4", "5"]

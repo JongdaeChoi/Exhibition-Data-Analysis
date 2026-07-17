@@ -57,6 +57,8 @@ class AdvancedSettings(BaseModel):
     donut: bool = False
     pie_shadow: bool = False
     pie_min_ratio: float = Field(default=0.0, ge=0.0, le=30.0)
+    pie_sort_by: Literal["none", "label", "value"] = "none"
+    pie_sort_direction: Literal["ascending", "descending"] = "ascending"
     scatter_size: float = Field(default=80.0, ge=5.0, le=1000.0)
     trendline: bool = False
     heatmap_cmap: str = "Blues"

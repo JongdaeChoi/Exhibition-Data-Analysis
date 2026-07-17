@@ -148,7 +148,19 @@ def build_line_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
 
 
 def build_pie_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
-    table = _sort_and_limit(_aggregate(_working_data(frame, spec), [spec.x], spec), spec)
+    table = _aggregate(_working_data(frame, spec), [spec.x], spec)
+    ascending = spec.advanced.pie_sort_direction == "ascending"
+    if spec.advanced.pie_sort_by == "label":
+        try:
+            table = table.sort_values(spec.x, ascending=ascending, kind="stable")
+        except TypeError:
+            order = table[spec.x].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
+            table = table.loc[order]
+    elif spec.advanced.pie_sort_by == "value":
+        table = table.sort_values("값", ascending=ascending, kind="stable")
+    if spec.advanced.top_n:
+        table = table.head(spec.advanced.top_n)
+    table = table.reset_index(drop=True)
     threshold = spec.advanced.pie_min_ratio
     if threshold > 0 and len(table) > 1:
         total = table["값"].sum()

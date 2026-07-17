@@ -199,6 +199,7 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     histogram_density = False
     line_style, line_width, marker, marker_size, area_fill, line_curvature = "-", 2.0, "o", 5.0, False, 0.0
     pie_start_angle, donut, pie_shadow, pie_min_ratio = 90, False, False, 0.0
+    pie_sort_by, pie_sort_direction = "none", "ascending"
     scatter_size, trendline = 80.0, False
     heatmap_cmap, heatmap_annotate, heatmap_colorbar, heatmap_linewidth = "Blues", True, True, 0.5
     st.markdown("##### 차트별 설정")
@@ -221,6 +222,20 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         donut = b.checkbox("도넛 형태", False, key=f"{prefix}_donut")
         pie_shadow = c.checkbox("그림자", False, key=f"{prefix}_shadow")
         pie_min_ratio = st.slider("최소 비율 미만을 기타로 통합(%)", 0.0, 30.0, 0.0, 0.5, key=f"{prefix}_pie_min")
+        sort_col, direction_col = st.columns(2)
+        pie_sort_by = sort_col.selectbox(
+            "조각·범례 정렬 기준",
+            ["none", "label", "value"],
+            format_func=lambda item: {"none": "원본 순서", "label": "컬럼 값", "value": "집계 값"}[item],
+            key=f"{prefix}_pie_sort_by",
+        )
+        pie_sort_direction = direction_col.selectbox(
+            "정렬 방향",
+            ["ascending", "descending"],
+            format_func=lambda item: {"ascending": "오름차순", "descending": "내림차순"}[item],
+            key=f"{prefix}_pie_sort_direction",
+            disabled=pie_sort_by == "none",
+        )
     elif chart_type == "histogram":
         a, b = st.columns(2)
         histogram_bins = a.slider("구간 수", 2, 100, 10, key=f"{prefix}_bins")
@@ -268,6 +283,8 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         donut=donut,
         pie_shadow=pie_shadow,
         pie_min_ratio=pie_min_ratio,
+        pie_sort_by=pie_sort_by,
+        pie_sort_direction=pie_sort_direction,
         scatter_size=scatter_size,
         trendline=trendline,
         heatmap_cmap=heatmap_cmap,
