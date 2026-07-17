@@ -214,15 +214,17 @@ def render_preprocessing() -> None:
     csv_col, excel_col = st.columns(2)
     csv_col.download_button(
         "CSV 다운로드",
-        data=to_csv_bytes(st.session_state.df_clean),
+        data=lambda frame=st.session_state.df_clean: to_csv_bytes(frame),
         file_name=f"{filename_stem}_clean.csv",
         mime="text/csv",
         width="stretch",
+        on_click="ignore",
     )
     excel_col.download_button(
         "Excel 다운로드",
-        data=to_excel_bytes(st.session_state.df_clean),
+        data=lambda frame=st.session_state.df_clean: to_excel_bytes(frame),
         file_name=f"{filename_stem}_clean.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         width="stretch",
+        on_click="ignore",
     )

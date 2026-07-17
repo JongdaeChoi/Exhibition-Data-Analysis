@@ -5,8 +5,6 @@ import streamlit as st
 from core.session import has_dataset, initialize_session, store_dataset
 from data.loader import DataLoadError, download_google_drive_file, load_table
 from data.profiler import build_basic_profile
-from ui.preprocessing_view import render_preprocessing
-from ui.visualization_view import render_visualization
 
 
 st.set_page_config(page_title="데이터 분석", page_icon="📊", layout="wide")
@@ -100,9 +98,27 @@ if has_dataset():
 
     with st.expander("원본 데이터 미리보기", expanded=False):
         st.dataframe(df.head(20), width="stretch")
-    st.divider()
-    render_preprocessing()
-    st.divider()
-    render_visualization()
+
+    st.subheader("3. 작업 단계")
+    stage = st.segmented_control(
+        "표시할 작업",
+        ["기본 현황", "전처리", "시각화"],
+        selection_mode="single",
+        key="analysis_stage",
+        help="선택한 단계만 실행하여 데이터 적재 후 화면 표시 속도를 높입니다.",
+    )
+    if stage == "전처리":
+        # Lazy import: preprocessing code and widgets are loaded only on demand.
+        from ui.preprocessing_view import render_preprocessing
+
+        st.divider()
+        render_preprocessing()
+    elif stage == "시각화":
+        # Lazy import: Matplotlib, Seaborn and font registration are not part of
+        # the data-load/basic-profile path.
+        from ui.visualization_view import render_visualization
+
+        st.divider()
+        render_visualization()
 else:
     st.info("파일을 선택하고 적재하면 데이터 기본 현황이 여기에 표시됩니다.")

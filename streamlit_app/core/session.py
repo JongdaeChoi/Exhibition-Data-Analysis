@@ -13,6 +13,7 @@ SESSION_DEFAULTS = {
     "source_filename": None,
     "load_source": None,
     "basic_profile": None,
+    "analysis_stage": "기본 현황",
     "preprocessing_notice": None,
     "preprocessing_section": "결측값",
     "preprocessing_revision": 0,
@@ -29,12 +30,14 @@ def initialize_session() -> None:
 
 
 def store_dataset(dataset: LoadedDataset, source: str) -> None:
-    # Keep two independent objects: df is read-only source, df_clean is the workspace.
-    st.session_state.df = dataset.df.copy(deep=True)
-    st.session_state.df_clean = dataset.df_clean.copy(deep=True)
+    # `load_table` already created two independent frames. Transfer ownership
+    # to session state without repeating expensive deep copies.
+    st.session_state.df = dataset.df
+    st.session_state.df_clean = dataset.df_clean
     st.session_state.source_filename = dataset.filename
     st.session_state.load_source = source
     st.session_state.basic_profile = build_basic_profile(st.session_state.df)
+    st.session_state.analysis_stage = "기본 현황"
     st.session_state.preprocessing_notice = None
     st.session_state.preprocessing_section = "결측값"
     st.session_state.preprocessing_revision = 0

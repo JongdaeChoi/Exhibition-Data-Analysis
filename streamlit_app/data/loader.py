@@ -56,7 +56,9 @@ def load_table(raw: bytes, filename: str) -> LoadedDataset:
     except Exception as exc:
         raise DataLoadError(f"파일을 읽는 중 오류가 발생했습니다: {exc}") from exc
 
-    df = loaded.copy(deep=True)
+    # `loaded` is local to this function, so it can become the session-owned
+    # source frame directly. Only one deep copy is required for the workspace.
+    df = loaded
     df_clean = df.copy(deep=True)
     return LoadedDataset(filename=safe_filename, df=df, df_clean=df_clean)
 
