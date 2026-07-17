@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 from streamlit.testing.v1 import AppTest
+
+
+APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 
 
 def _loaded_app() -> AppTest:
@@ -12,7 +17,7 @@ def _loaded_app() -> AppTest:
             "값": [10, 20],
         }
     )
-    app = AppTest.from_file("streamlit_app/app.py", default_timeout=30)
+    app = AppTest.from_file(str(APP_PATH), default_timeout=30)
     app.session_state["df"] = frame
     app.session_state["df_clean"] = frame.copy(deep=True)
     app.session_state["source_filename"] = "sample.csv"
@@ -47,7 +52,7 @@ def test_heavy_sections_render_only_when_selected() -> None:
 
 
 def test_local_upload_opens_fast_basic_stage() -> None:
-    app = AppTest.from_file("streamlit_app/app.py", default_timeout=30).run()
+    app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
     app.file_uploader[0].upload(
         "sample.csv",
         b"name,value\nA,1\nB,2\n",
