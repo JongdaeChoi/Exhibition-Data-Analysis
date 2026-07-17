@@ -7,9 +7,10 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
+from matplotlib.colors import to_rgba
 from matplotlib.container import BarContainer
 from matplotlib.dates import date2num
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Shadow
 from matplotlib.ticker import MultipleLocator
 from matplotlib.transforms import offset_copy
 
@@ -301,9 +302,12 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
 def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     values = table["값"].to_numpy()
     labels = table[spec.x].astype(str).tolist()
-    colors = _palette(spec.advanced.palette, len(table))
+    colors = [to_rgba(color, spec.advanced.alpha) for color in _palette(spec.advanced.palette, len(table))]
     outer_radius = 1.0
-    wedgeprops = {"edgecolor": spec.advanced.edge_color, "linewidth": spec.advanced.edge_width}
+    wedgeprops = {
+        "edgecolor": to_rgba(spec.advanced.edge_color, spec.advanced.pie_edge_alpha),
+        "linewidth": spec.advanced.edge_width,
+    }
     if spec.advanced.donut:
         outer_radius = spec.advanced.donut_hole_size + spec.advanced.donut_ring_width
         wedgeprops["width"] = spec.advanced.donut_ring_width
@@ -314,14 +318,19 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     )
     show_label = spec.show_values and spec.advanced.pie_label_mode in {"label", "label_ratio"}
     show_ratio = spec.show_values and spec.advanced.pie_label_mode in {"ratio", "label_ratio"}
+    explode = [
+        spec.advanced.pie_explode_width if label in spec.advanced.pie_explode_labels else 0.0
+        for label in labels
+    ]
     pie_result = ax.pie(
         values,
         labels=labels if show_label else None,
         colors=colors,
         startangle=spec.advanced.pie_start_angle,
-        autopct="%1.1f%%" if show_ratio else None,
+        autopct=f"%1{spec.advanced.pie_ratio_format}%%" if show_ratio else None,
         pctdistance=pctdistance,
-        shadow=spec.advanced.pie_shadow,
+        explode=explode,
+        shadow=False,
         wedgeprops=wedgeprops,
         radius=outer_radius,
         textprops={"fontsize": spec.advanced.label_font_size, "color": spec.advanced.label_color},
@@ -332,6 +341,18 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     else:
         wedges = pie_result[0]
         pie_texts = list(pie_result[1]) + (list(pie_result[2]) if len(pie_result) > 2 else [])
+    if spec.advanced.pie_shadow:
+        for wedge in wedges:
+            shadow = Shadow(
+                wedge,
+                spec.advanced.pie_shadow_width,
+                -spec.advanced.pie_shadow_width,
+                facecolor=spec.advanced.pie_shadow_color,
+                edgecolor="none",
+                alpha=spec.advanced.pie_shadow_alpha,
+            )
+            shadow.set_zorder(wedge.get_zorder() - 0.1)
+            ax.add_patch(shadow)
     if spec.show_values and spec.advanced.label_position_mode == "manual":
         for text in pie_texts:
             text.set_transform(
@@ -349,9 +370,16 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 (0, 0),
                 radius=spec.advanced.donut_hole_size,
                 facecolor=spec.advanced.donut_center_color,
-                edgecolor=spec.advanced.donut_center_border_color if spec.advanced.donut_center_border else "none",
+                edgecolor=(
+                    to_rgba(
+                        spec.advanced.donut_center_border_color,
+                        spec.advanced.donut_center_border_alpha,
+                    )
+                    if spec.advanced.donut_center_border
+                    else "none"
+                ),
                 linewidth=spec.advanced.donut_center_border_width if spec.advanced.donut_center_border else 0,
-                zorder=0.5,
+                zorder=1.1,
             )
         )
     ax.set_title(spec.title or f"{spec.x} 구성", fontsize=spec.advanced.title_size, fontweight="bold")

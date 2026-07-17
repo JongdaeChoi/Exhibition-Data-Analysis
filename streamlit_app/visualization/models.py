@@ -52,6 +52,7 @@ class AdvancedSettings(BaseModel):
     label_font_size: int = Field(default=8, ge=4, le=40)
     label_color: str = "#172033"
     pie_label_mode: Literal["ratio", "label", "label_ratio"] = "ratio"
+    pie_ratio_format: Literal[".0f", ".1f", ".2f"] = ".1f"
     histogram_bins: int = Field(default=10, ge=2, le=100)
     histogram_density: bool = False
     line_style: Literal["-", "--", "-.", ":"] = "-"
@@ -63,6 +64,12 @@ class AdvancedSettings(BaseModel):
     pie_start_angle: int = Field(default=90, ge=0, le=360)
     donut: bool = False
     pie_shadow: bool = False
+    pie_shadow_width: float = Field(default=0.04, ge=0.0, le=0.2)
+    pie_shadow_color: str = "#475569"
+    pie_shadow_alpha: float = Field(default=0.35, ge=0.0, le=1.0)
+    pie_explode_labels: list[str] = Field(default_factory=list)
+    pie_explode_width: float = Field(default=0.08, ge=0.0, le=0.5)
+    pie_edge_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
     pie_min_ratio: float = Field(default=0.0, ge=0.0, le=30.0)
     pie_sort_by: Literal["none", "label", "value"] = "none"
     pie_sort_direction: Literal["ascending", "descending"] = "ascending"
@@ -72,6 +79,7 @@ class AdvancedSettings(BaseModel):
     donut_center_border: bool = False
     donut_center_border_color: str = "#334155"
     donut_center_border_width: float = Field(default=1.0, ge=0.0, le=10.0)
+    donut_center_border_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
     scatter_size: float = Field(default=80.0, ge=5.0, le=1000.0)
     trendline: bool = False
     heatmap_cmap: str = "Blues"

@@ -5,7 +5,7 @@ from datetime import date
 import matplotlib
 import pandas as pd
 import pytest
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Shadow, Wedge
 from pydantic import ValidationError
 
 matplotlib.use("Agg")
@@ -207,18 +207,34 @@ def test_donut_geometry_center_style_and_pie_label_modes() -> None:
             "donut_center_border": True,
             "donut_center_border_color": "#EA580C",
             "donut_center_border_width": 2,
+            "donut_center_border_alpha": 0.55,
             "pie_label_mode": "label_ratio",
+            "pie_ratio_format": ".0f",
+            "pie_explode_labels": ["2"],
+            "pie_explode_width": 0.2,
+            "pie_shadow": True,
+            "pie_shadow_width": 0.06,
+            "pie_shadow_color": "#111827",
+            "pie_shadow_alpha": 0.4,
+            "pie_edge_alpha": 0.45,
             "top_n": None,
         },
     )
     result = build_visualization(frame, [spec], FigureSpec(rows=1, columns=1))
     axis = result.figure.axes[0]
     centers = [patch for patch in axis.patches if isinstance(patch, Circle)]
+    wedges = [patch for patch in axis.patches if isinstance(patch, Wedge) and not isinstance(patch, Shadow)]
+    shadows = [patch for patch in axis.patches if isinstance(patch, Shadow)]
     assert centers and centers[0].get_radius() == pytest.approx(0.45)
     assert centers[0].get_linewidth() == pytest.approx(2)
+    assert centers[0].get_edgecolor()[3] == pytest.approx(0.55)
+    assert shadows and all(shadow.get_alpha() == pytest.approx(0.4) for shadow in shadows)
+    assert centers[0].get_zorder() > max(shadow.get_zorder() for shadow in shadows)
+    assert any(wedge.center != (0.0, 0.0) for wedge in wedges)
+    assert all(wedge.get_edgecolor()[3] == pytest.approx(0.45) for wedge in wedges)
     texts = [text.get_text() for text in axis.texts]
     assert {"1", "2", "3"}.issubset(texts)
-    assert any("%" in text for text in texts)
+    assert "25%" in texts and "50%" in texts
     with pytest.raises(ValidationError):
         ChartSpec(
             chart_type="pie",
