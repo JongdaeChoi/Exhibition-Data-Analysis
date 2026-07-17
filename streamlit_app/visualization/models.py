@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from enum import Enum
 from typing import Literal
 
@@ -45,6 +46,12 @@ class AdvancedSettings(BaseModel):
     axis_size: int = Field(default=10, ge=6, le=30)
     number_format: str = ",.1f"
     unit: str = ""
+    label_position_mode: Literal["auto", "manual"] = "auto"
+    label_offset_x: float = Field(default=0.0, ge=-100.0, le=100.0)
+    label_offset_y: float = Field(default=5.0, ge=-100.0, le=100.0)
+    label_font_size: int = Field(default=8, ge=4, le=40)
+    label_color: str = "#172033"
+    pie_label_mode: Literal["ratio", "label", "label_ratio"] = "ratio"
     histogram_bins: int = Field(default=10, ge=2, le=100)
     histogram_density: bool = False
     line_style: Literal["-", "--", "-.", ":"] = "-"
@@ -59,12 +66,24 @@ class AdvancedSettings(BaseModel):
     pie_min_ratio: float = Field(default=0.0, ge=0.0, le=30.0)
     pie_sort_by: Literal["none", "label", "value"] = "none"
     pie_sort_direction: Literal["ascending", "descending"] = "ascending"
+    donut_hole_size: float = Field(default=0.5, ge=0.05, le=0.9)
+    donut_ring_width: float = Field(default=0.4, ge=0.05, le=0.9)
+    donut_center_color: str = "#FFFFFF"
+    donut_center_border: bool = False
+    donut_center_border_color: str = "#334155"
+    donut_center_border_width: float = Field(default=1.0, ge=0.0, le=10.0)
     scatter_size: float = Field(default=80.0, ge=5.0, le=1000.0)
     trendline: bool = False
     heatmap_cmap: str = "Blues"
     heatmap_annotate: bool = True
     heatmap_colorbar: bool = True
     heatmap_linewidth: float = Field(default=0.5, ge=0.0, le=5.0)
+
+    @model_validator(mode="after")
+    def validate_donut_geometry(self):
+        if self.donut and self.donut_hole_size + self.donut_ring_width > 1.0:
+            raise ValueError("도넛 구멍 크기와 링 두께의 합은 1.0 이하여야 합니다.")
+        return self
 
 
 class DeepSettings(BaseModel):
@@ -92,6 +111,18 @@ class DeepSettings(BaseModel):
     cumulative: bool = False
     normalize: bool = False
     reference_line: float | None = None
+    reference_enabled: bool = False
+    reference_targets: list[Literal["x", "y"]] = Field(default_factory=list)
+    reference_line_style: Literal["-", "--", "-.", ":"] = "--"
+    reference_line_width: float = Field(default=1.2, ge=0.1, le=10.0)
+    reference_line_alpha: float = Field(default=0.8, ge=0.0, le=1.0)
+    reference_label: str = ""
+    reference_label_size: int = Field(default=9, ge=4, le=40)
+    reference_label_alpha: float = Field(default=0.9, ge=0.0, le=1.0)
+    x_reference_kind: Literal["numeric", "category", "date"] | None = None
+    y_reference_kind: Literal["numeric", "category", "date"] | None = None
+    x_reference_value: float | date | str | None = None
+    y_reference_value: float | date | str | None = None
     show_mean: bool = False
     show_median: bool = False
     jitter: float = Field(default=0.0, ge=0.0, le=2.0)
@@ -117,6 +148,12 @@ class DeepSettings(BaseModel):
                 raise ValueError(f"{axis.upper()}축 범주의 시작값과 종료값을 선택하세요.")
             if mode == "category_select" and not getattr(self, f"{axis}_selected_categories"):
                 raise ValueError(f"{axis.upper()}축에 표시할 항목을 하나 이상 선택하세요.")
+        if self.reference_enabled:
+            if not self.reference_targets:
+                raise ValueError("기준선을 적용할 X축 또는 Y축을 선택하세요.")
+            for axis in self.reference_targets:
+                if getattr(self, f"{axis}_reference_value") is None:
+                    raise ValueError(f"{axis.upper()}축 기준값을 입력하세요.")
         return self
 
 

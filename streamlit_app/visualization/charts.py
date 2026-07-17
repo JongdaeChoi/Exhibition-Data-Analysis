@@ -8,7 +8,10 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.container import BarContainer
+from matplotlib.dates import date2num
+from matplotlib.patches import Circle
 from matplotlib.ticker import MultipleLocator
+from matplotlib.transforms import offset_copy
 
 from visualization.models import ChartSpec
 
@@ -26,6 +29,112 @@ def _format_value(value: float, spec: ChartSpec) -> str:
         return f"{value:{spec.advanced.number_format}}{suffix}"
     except (ValueError, TypeError):
         return f"{value:,.1f}{suffix}"
+
+
+def _label_offset(spec: ChartSpec, default_x: float = 0.0, default_y: float = 5.0) -> tuple[float, float]:
+    if spec.advanced.label_position_mode == "manual":
+        return spec.advanced.label_offset_x, spec.advanced.label_offset_y
+    return default_x, default_y
+
+
+def _label_bar_containers(
+    ax: Axes,
+    containers: list[BarContainer],
+    spec: ChartSpec,
+    horizontal: bool,
+    stacked: bool = False,
+) -> None:
+    offset_x, offset_y = _label_offset(spec, 0.0, 0.0 if stacked else 3.0)
+    for container in containers:
+        values = [bar.get_width() if horizontal else bar.get_height() for bar in container]
+        labels = [_format_value(value, spec) if value else "" for value in values]
+        if spec.advanced.label_position_mode == "auto":
+            ax.bar_label(
+                container,
+                labels=labels,
+                label_type="center" if stacked else "edge",
+                padding=0 if stacked else 3,
+                fontsize=spec.advanced.label_font_size,
+                color=spec.advanced.label_color,
+            )
+            continue
+        for bar, label in zip(container, labels):
+            if not label:
+                continue
+            endpoint = (
+                (bar.get_x() + bar.get_width(), bar.get_y() + bar.get_height() / 2)
+                if horizontal
+                else (bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height())
+            )
+            ax.annotate(
+                label,
+                endpoint,
+                xytext=(offset_x, offset_y),
+                textcoords="offset points",
+                ha="left" if horizontal else "center",
+                va="center" if horizontal else "bottom",
+                fontsize=spec.advanced.label_font_size,
+                color=spec.advanced.label_color,
+            )
+
+
+def _reference_coordinate(ax: Axes, axis: str, value, kind: str | None) -> float | None:
+    ticks = ax.get_xticks() if axis == "x" else ax.get_yticks()
+    labels = ax.get_xticklabels() if axis == "x" else ax.get_yticklabels()
+    target = str(value)
+    for tick, label in zip(ticks, labels):
+        label_text = label.get_text().strip()
+        if label_text == target:
+            return float(tick)
+        if kind == "date":
+            try:
+                if pd.to_datetime(label_text).date() == pd.to_datetime(value).date():
+                    return float(tick)
+            except (TypeError, ValueError):
+                pass
+    if kind == "numeric":
+        return float(value)
+    if kind == "date":
+        try:
+            return float(date2num(pd.to_datetime(value).to_pydatetime()))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _apply_reference_lines(ax: Axes, spec: ChartSpec) -> None:
+    deep = spec.deep
+    if not deep.reference_enabled:
+        return
+    color = "#D97706"
+    for axis in deep.reference_targets:
+        value = getattr(deep, f"{axis}_reference_value")
+        kind = getattr(deep, f"{axis}_reference_kind")
+        coordinate = _reference_coordinate(ax, axis, value, kind)
+        if coordinate is None:
+            continue
+        line_kwargs = {
+            "color": color,
+            "linestyle": deep.reference_line_style,
+            "linewidth": deep.reference_line_width,
+            "alpha": deep.reference_line_alpha,
+        }
+        if axis == "x":
+            ax.axvline(coordinate, **line_kwargs)
+            if deep.reference_label:
+                ax.text(
+                    coordinate, 0.98, deep.reference_label,
+                    transform=ax.get_xaxis_transform(), ha="left", va="top",
+                    fontsize=deep.reference_label_size, color=color, alpha=deep.reference_label_alpha,
+                )
+        else:
+            ax.axhline(coordinate, **line_kwargs)
+            if deep.reference_label:
+                ax.text(
+                    0.98, coordinate, deep.reference_label,
+                    transform=ax.get_yaxis_transform(), ha="right", va="bottom",
+                    fontsize=deep.reference_label_size, color=color, alpha=deep.reference_label_alpha,
+                )
 
 
 def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple[np.ndarray, np.ndarray]:
@@ -78,6 +187,7 @@ def _apply_common(ax: Axes, spec: ChartSpec) -> None:
         ax.invert_xaxis()
     if spec.deep.invert_y:
         ax.invert_yaxis()
+    _apply_reference_lines(ax, spec)
 
 
 def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
@@ -97,17 +207,8 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         )
         if spec.show_values:
             stacked = spec.advanced.bar_mode in {"stacked", "stacked_100"}
-            for container in ax.containers:
-                if isinstance(container, BarContainer):
-                    values = [bar.get_width() if horizontal else bar.get_height() for bar in container]
-                    labels = [_format_value(value, spec) if value else "" for value in values]
-                    ax.bar_label(
-                        container,
-                        labels=labels,
-                        label_type="center" if stacked else "edge",
-                        padding=0 if stacked else 3,
-                        fontsize=8,
-                    )
+            containers = [container for container in ax.containers if isinstance(container, BarContainer)]
+            _label_bar_containers(ax, containers, spec, horizontal, stacked)
     else:
         labels = table[spec.x].astype(str)
         values = table["값"].to_numpy()
@@ -116,7 +217,7 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         else:
             bars = ax.bar(labels, values, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
         if spec.show_values:
-            ax.bar_label(bars, labels=[_format_value(v, spec) for v in values], padding=3, fontsize=8)
+            _label_bar_containers(ax, [bars], spec, horizontal)
     _apply_common(ax, spec)
     if group and spec.advanced.legend:
         ax.legend(loc=spec.advanced.legend_location, fontsize=8)
@@ -183,8 +284,13 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 # Categorical axes are positioned at 0..n-1 by Matplotlib.
                 ax.fill_between(range(len(part)), y_values, alpha=0.14, color=line_color)
         if spec.show_values:
+            offset_x, offset_y = _label_offset(spec)
             for x, y in zip(x_plot, y_plot):
-                ax.annotate(_format_value(y, spec), (x, y), xytext=(0, 5), textcoords="offset points", ha="center", fontsize=7)
+                ax.annotate(
+                    _format_value(y, spec), (x, y), xytext=(offset_x, offset_y),
+                    textcoords="offset points", ha="center",
+                    fontsize=spec.advanced.label_font_size, color=spec.advanced.label_color,
+                )
     if categorical_labels is not None:
         ax.set_xticks(range(len(categorical_labels)), categorical_labels)
     _apply_common(ax, spec)
@@ -196,20 +302,61 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     values = table["값"].to_numpy()
     labels = table[spec.x].astype(str).tolist()
     colors = _palette(spec.advanced.palette, len(table))
-    wedgeprops = {"width": 0.45, "edgecolor": spec.advanced.edge_color, "linewidth": spec.advanced.edge_width} if spec.advanced.donut else {"edgecolor": spec.advanced.edge_color, "linewidth": spec.advanced.edge_width}
-    ax.pie(
+    outer_radius = 1.0
+    wedgeprops = {"edgecolor": spec.advanced.edge_color, "linewidth": spec.advanced.edge_width}
+    if spec.advanced.donut:
+        outer_radius = spec.advanced.donut_hole_size + spec.advanced.donut_ring_width
+        wedgeprops["width"] = spec.advanced.donut_ring_width
+    pctdistance = (
+        (spec.advanced.donut_hole_size + spec.advanced.donut_ring_width * 0.5) / outer_radius
+        if spec.advanced.donut
+        else 0.6
+    )
+    show_label = spec.show_values and spec.advanced.pie_label_mode in {"label", "label_ratio"}
+    show_ratio = spec.show_values and spec.advanced.pie_label_mode in {"ratio", "label_ratio"}
+    pie_result = ax.pie(
         values,
-        labels=labels if not spec.advanced.legend else None,
+        labels=labels if show_label else None,
         colors=colors,
         startangle=spec.advanced.pie_start_angle,
-        autopct="%1.1f%%" if spec.show_values else None,
+        autopct="%1.1f%%" if show_ratio else None,
+        pctdistance=pctdistance,
         shadow=spec.advanced.pie_shadow,
         wedgeprops=wedgeprops,
-        textprops={"fontsize": 8},
+        radius=outer_radius,
+        textprops={"fontsize": spec.advanced.label_font_size, "color": spec.advanced.label_color},
     )
+    if hasattr(pie_result, "wedges"):
+        wedges = pie_result.wedges
+        pie_texts = list(pie_result.texts)
+    else:
+        wedges = pie_result[0]
+        pie_texts = list(pie_result[1]) + (list(pie_result[2]) if len(pie_result) > 2 else [])
+    if spec.show_values and spec.advanced.label_position_mode == "manual":
+        for text in pie_texts:
+            text.set_transform(
+                offset_copy(
+                    ax.transData,
+                    fig=ax.figure,
+                    x=spec.advanced.label_offset_x,
+                    y=spec.advanced.label_offset_y,
+                    units="points",
+                )
+            )
+    if spec.advanced.donut:
+        ax.add_patch(
+            Circle(
+                (0, 0),
+                radius=spec.advanced.donut_hole_size,
+                facecolor=spec.advanced.donut_center_color,
+                edgecolor=spec.advanced.donut_center_border_color if spec.advanced.donut_center_border else "none",
+                linewidth=spec.advanced.donut_center_border_width if spec.advanced.donut_center_border else 0,
+                zorder=0.5,
+            )
+        )
     ax.set_title(spec.title or f"{spec.x} 구성", fontsize=spec.advanced.title_size, fontweight="bold")
     if spec.advanced.legend:
-        ax.legend(labels, loc=spec.advanced.legend_location, fontsize=8)
+        ax.legend(wedges, labels, loc=spec.advanced.legend_location, fontsize=8)
 
 
 def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
@@ -224,7 +371,7 @@ def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         linewidth=spec.advanced.edge_width,
     )
     if spec.show_values:
-        ax.bar_label(bars, labels=[_format_value(v, spec) for v in table["값"]], padding=2, fontsize=7)
+        _label_bar_containers(ax, [bars], spec, horizontal=False)
     if spec.deep.show_mean:
         weighted_mean = np.average(table["구간 중심"], weights=np.maximum(table["값"], 0)) if table["값"].sum() else table["구간 중심"].mean()
         ax.axvline(weighted_mean, color="#D97706", linestyle="--", label="평균")
@@ -270,6 +417,13 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
     if spec.deep.show_correlation and valid.sum() >= 2:
         corr = float(np.corrcoef(x[valid], y[valid])[0, 1])
         ax.text(0.02, 0.98, f"r = {corr:.3f}", transform=ax.transAxes, va="top", fontsize=9, bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "#CBD5E1"})
+    mappings = table.attrs.get("category_mappings", {})
+    if spec.x in mappings:
+        mapping = mappings[spec.x]
+        ax.set_xticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
+    if spec.y in mappings:
+        mapping = mappings[spec.y]
+        ax.set_yticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
     _apply_common(ax, spec)
     ax.set_ylabel(spec.y_label or spec.y)
 

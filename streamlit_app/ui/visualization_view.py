@@ -135,6 +135,8 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
     x_label = c7.text_input("X축 제목", x, key=f"{prefix}_xlabel")
     y_label = c8.text_input("Y축 제목", "값", key=f"{prefix}_ylabel")
     show_values = st.checkbox("값 표시", True, key=f"{prefix}_show_values", disabled=chart_type in {"scatter_bubble", "heatmap"})
+    if chart_type in {"scatter_bubble", "heatmap"}:
+        show_values = False
     return {
         "chart_type": chart_type,
         "x": x,
@@ -149,8 +151,10 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
     }
 
 
-def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
+def _advanced_controls(index: int, basic: dict) -> AdvancedSettings:
     prefix = f"viz_{index}_adv"
+    chart_type = basic["chart_type"]
+    show_values = basic["show_values"]
     c1, c2, c3, c4 = st.columns(4)
     sort_options = ["none", "ascending", "descending"]
     sort_labels = {"none": "정렬 안 함", "ascending": "오름차순", "descending": "내림차순"}
@@ -193,6 +197,45 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     axis_size = c17.slider("축 글자 크기", 6, 30, 10, key=f"{prefix}_axis_size")
     unit = c18.text_input("표시 단위", "", key=f"{prefix}_unit")
 
+    st.markdown("##### 값(Data Label) 설정")
+    label_a, label_b, label_c = st.columns(3)
+    label_position_mode = label_a.selectbox(
+        "표시 위치",
+        ["auto", "manual"],
+        format_func=lambda item: {"auto": "자동", "manual": "직접 입력"}[item],
+        key=f"{prefix}_label_position",
+        disabled=not show_values,
+    )
+    manual_position = show_values and label_position_mode == "manual"
+    label_offset_x = label_b.number_input(
+        "X 조정값(points)", -100.0, 100.0, 0.0, 1.0,
+        key=f"{prefix}_label_offset_x", disabled=not manual_position,
+    )
+    label_offset_y = label_c.number_input(
+        "Y 조정값(points)", -100.0, 100.0, 5.0, 1.0,
+        key=f"{prefix}_label_offset_y", disabled=not manual_position,
+    )
+    label_d, label_e = st.columns(2)
+    label_font_size = label_d.slider(
+        "라벨 폰트 크기", 4, 40, 8, key=f"{prefix}_label_font_size", disabled=not show_values
+    )
+    label_color = label_e.color_picker(
+        "라벨 색상", "#172033", key=f"{prefix}_label_color", disabled=not show_values
+    )
+    pie_label_mode = "ratio"
+    if chart_type == "pie":
+        pie_label_mode = st.selectbox(
+            "Pie/Donut 표시 방식",
+            ["ratio", "label", "label_ratio"],
+            format_func=lambda item: {
+                "ratio": "비율만",
+                "label": "라벨만",
+                "label_ratio": "라벨 + 비율",
+            }[item],
+            key=f"{prefix}_pie_label_mode",
+            disabled=not show_values,
+        )
+
     orientation = "vertical"
     bar_mode = "basic"
     histogram_bins = 10
@@ -200,6 +243,9 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     line_style, line_width, marker, marker_size, area_fill, line_curvature = "-", 2.0, "o", 5.0, False, 0.0
     pie_start_angle, donut, pie_shadow, pie_min_ratio = 90, False, False, 0.0
     pie_sort_by, pie_sort_direction = "none", "ascending"
+    donut_hole_size, donut_ring_width = 0.5, 0.4
+    donut_center_color, donut_center_border = "#FFFFFF", False
+    donut_center_border_color, donut_center_border_width = "#334155", 1.0
     scatter_size, trendline = 80.0, False
     heatmap_cmap, heatmap_annotate, heatmap_colorbar, heatmap_linewidth = "Blues", True, True, 0.5
     st.markdown("##### 차트별 설정")
@@ -219,9 +265,38 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
     elif chart_type == "pie":
         a, b, c = st.columns(3)
         pie_start_angle = a.slider("시작 각도", 0, 360, 90, key=f"{prefix}_pie_angle")
-        donut = b.checkbox("도넛 형태", False, key=f"{prefix}_donut")
+        donut = b.checkbox("도넛 사용", False, key=f"{prefix}_donut")
         pie_shadow = c.checkbox("그림자", False, key=f"{prefix}_shadow")
         pie_min_ratio = st.slider("최소 비율 미만을 기타로 통합(%)", 0.0, 30.0, 0.0, 0.5, key=f"{prefix}_pie_min")
+        donut_a, donut_b = st.columns(2)
+        donut_hole_size = donut_a.slider(
+            "도넛 구멍 크기", 0.05, 0.9, 0.5, 0.05,
+            key=f"{prefix}_donut_hole", disabled=not donut,
+        )
+        ring_key = f"{prefix}_donut_ring"
+        maximum_ring = round(max(0.05, 1.0 - donut_hole_size), 2)
+        if ring_key in st.session_state and st.session_state[ring_key] > maximum_ring:
+            st.session_state[ring_key] = maximum_ring
+        donut_ring_width = donut_b.slider(
+            "도넛 링 두께", 0.05, maximum_ring, min(0.4, maximum_ring), 0.05,
+            key=ring_key, disabled=not donut,
+        )
+        center_a, center_b = st.columns(2)
+        donut_center_color = center_a.color_picker(
+            "중앙 배경색", "#FFFFFF", key=f"{prefix}_donut_center_color", disabled=not donut
+        )
+        donut_center_border = center_b.checkbox(
+            "중앙 테두리", False, key=f"{prefix}_donut_center_border", disabled=not donut
+        )
+        border_a, border_b = st.columns(2)
+        donut_center_border_color = border_a.color_picker(
+            "중앙 테두리 색상", "#334155", key=f"{prefix}_donut_border_color",
+            disabled=not donut or not donut_center_border,
+        )
+        donut_center_border_width = border_b.slider(
+            "중앙 테두리 두께", 0.0, 10.0, 1.0, 0.5, key=f"{prefix}_donut_border_width",
+            disabled=not donut or not donut_center_border,
+        )
         sort_col, direction_col = st.columns(2)
         pie_sort_by = sort_col.selectbox(
             "조각·범례 정렬 기준",
@@ -271,6 +346,12 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         axis_size=axis_size,
         number_format=number_format,
         unit=unit,
+        label_position_mode=label_position_mode if show_values else "auto",
+        label_offset_x=label_offset_x,
+        label_offset_y=label_offset_y,
+        label_font_size=label_font_size,
+        label_color=label_color,
+        pie_label_mode=pie_label_mode,
         histogram_bins=histogram_bins,
         histogram_density=histogram_density,
         line_style=line_style,
@@ -285,6 +366,12 @@ def _advanced_controls(index: int, chart_type: str) -> AdvancedSettings:
         pie_min_ratio=pie_min_ratio,
         pie_sort_by=pie_sort_by,
         pie_sort_direction=pie_sort_direction,
+        donut_hole_size=donut_hole_size,
+        donut_ring_width=donut_ring_width,
+        donut_center_color=donut_center_color,
+        donut_center_border=donut_center_border if donut else False,
+        donut_center_border_color=donut_center_border_color,
+        donut_center_border_width=donut_center_border_width,
         scatter_size=scatter_size,
         trendline=trendline,
         heatmap_cmap=heatmap_cmap,
@@ -396,6 +483,116 @@ def _axis_controls(index: int, axis: str, kind: str, column: str | None, frame: 
         return result
 
 
+def _reference_kind(frame: pd.DataFrame, column: str | None, axis_kind: str) -> str:
+    if axis_kind == "unavailable":
+        return "unavailable"
+    if column:
+        series = frame[column]
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return "date"
+        if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+            non_null = series.dropna()
+            if not non_null.empty:
+                parsed = pd.to_datetime(non_null, errors="coerce", format="mixed")
+                if float(parsed.notna().mean()) >= 0.8:
+                    return "date"
+    return "numeric" if axis_kind == "numeric" else "category"
+
+
+def _reference_controls(
+    index: int,
+    frame: pd.DataFrame,
+    x_kind: str,
+    x_column: str | None,
+    y_kind: str,
+    y_column: str | None,
+) -> dict:
+    prefix = f"viz_{index}_deep_reference"
+    x_reference_kind = _reference_kind(frame, x_column, x_kind)
+    y_reference_kind = _reference_kind(frame, y_column, y_kind)
+    available = [axis for axis, kind in (("x", x_reference_kind), ("y", y_reference_kind)) if kind != "unavailable"]
+    st.markdown("##### 기준선")
+    enabled = st.checkbox("기준선 사용", False, key=f"{prefix}_enabled", disabled=not available)
+    default_target = ["y"] if "y" in available else available[:1]
+    targets = st.multiselect(
+        "적용 대상",
+        available,
+        default=default_target,
+        format_func=lambda axis: f"{axis.upper()}축",
+        key=f"{prefix}_targets",
+        disabled=not enabled,
+    )
+    style_a, style_b, style_c = st.columns(3)
+    line_style = style_a.selectbox(
+        "선 스타일", ["-", "--", "-.", ":"], index=1, key=f"{prefix}_style", disabled=not enabled
+    )
+    line_width = style_b.slider(
+        "선 두께", 0.1, 10.0, 1.2, 0.1, key=f"{prefix}_width", disabled=not enabled
+    )
+    line_alpha = style_c.slider(
+        "선 투명도", 0.0, 1.0, 0.8, 0.05, key=f"{prefix}_alpha", disabled=not enabled
+    )
+    label_a, label_b, label_c = st.columns(3)
+    label = label_a.text_input("기준선 라벨", key=f"{prefix}_label", disabled=not enabled)
+    label_size = label_b.slider(
+        "라벨 크기", 4, 40, 9, key=f"{prefix}_label_size", disabled=not enabled
+    )
+    label_alpha = label_c.slider(
+        "라벨 투명도", 0.0, 1.0, 0.9, 0.05, key=f"{prefix}_label_alpha", disabled=not enabled
+    )
+    values: dict[str, object | None] = {"x": None, "y": None}
+    kinds = {"x": x_reference_kind, "y": y_reference_kind}
+    columns = {"x": x_column, "y": y_column}
+    for axis in available:
+        kind = kinds[axis]
+        column = columns[axis]
+        disabled = not enabled or axis not in targets
+        if kind == "numeric":
+            if column and pd.api.types.is_numeric_dtype(frame[column]):
+                numeric = pd.to_numeric(frame[column], errors="coerce").dropna()
+                default = float(numeric.median()) if not numeric.empty else 0.0
+            else:
+                default = 0.0
+            values[axis] = st.number_input(
+                f"{axis.upper()}축 기준 수치", value=default,
+                key=f"{prefix}_{axis}_{column}_numeric", disabled=disabled,
+            )
+        elif kind == "date":
+            parsed = pd.to_datetime(frame[column], errors="coerce", format="mixed").dropna()
+            default_date = parsed.min().date() if not parsed.empty else pd.Timestamp.today().date()
+            values[axis] = st.date_input(
+                f"{axis.upper()}축 기준 날짜", value=default_date,
+                key=f"{prefix}_{axis}_{column}_date", disabled=disabled,
+            )
+        else:
+            categories = list(dict.fromkeys(frame[column].dropna().astype(str).tolist())) if column else []
+            values[axis] = st.selectbox(
+                f"{axis.upper()}축 기준 범주", categories or ["사용할 수 없음"],
+                key=f"{prefix}_{axis}_{column}_category", disabled=disabled or not categories,
+            ) if categories else None
+    if not enabled:
+        targets = []
+        values = {"x": None, "y": None}
+    else:
+        for axis in ("x", "y"):
+            if axis not in targets:
+                values[axis] = None
+    return {
+        "reference_enabled": enabled,
+        "reference_targets": targets,
+        "reference_line_style": line_style,
+        "reference_line_width": line_width,
+        "reference_line_alpha": line_alpha,
+        "reference_label": label,
+        "reference_label_size": label_size,
+        "reference_label_alpha": label_alpha,
+        "x_reference_kind": x_reference_kind if "x" in targets else None,
+        "y_reference_kind": y_reference_kind if "y" in targets else None,
+        "x_reference_value": values["x"],
+        "y_reference_value": values["y"],
+    }
+
+
 def _deep_controls(index: int, basic: dict, frame: pd.DataFrame) -> DeepSettings:
     prefix = f"viz_{index}_deep"
     chart_type = basic["chart_type"]
@@ -419,8 +616,8 @@ def _deep_controls(index: int, basic: dict, frame: pd.DataFrame) -> DeepSettings
         invert_x = False
     if y_kind == "unavailable":
         invert_y = False
-    c9, c10, c11 = st.columns(3)
-    reference_line = _number_or_none("기준선", f"{prefix}_reference")
+    reference = _reference_controls(index, frame, x_kind, x_column, y_kind, y_column)
+    c10, c11 = st.columns(2)
     normalize = c10.checkbox("정규화", False, key=f"{prefix}_normalize")
     cumulative = c11.checkbox("누적합", False, key=f"{prefix}_cumulative", disabled=chart_type != "line")
     moving_average = None
@@ -452,7 +649,7 @@ def _deep_controls(index: int, basic: dict, frame: pd.DataFrame) -> DeepSettings
         moving_average=moving_average,
         cumulative=cumulative,
         normalize=normalize,
-        reference_line=reference_line,
+        **reference,
         show_mean=show_mean,
         show_median=show_median,
         jitter=jitter,
@@ -471,7 +668,7 @@ def _structured_specs(frame: pd.DataFrame, chart_count: int) -> list[ChartSpec]:
         with st.expander("Basic · 기본 설정", expanded=True):
             basic = _basic_controls(index, columns, numeric_columns)
         with st.expander("Advanced1 · 고급 설정", expanded=False):
-            advanced = _advanced_controls(index, basic["chart_type"])
+            advanced = _advanced_controls(index, basic)
         with st.expander("Advanced2 · 심화 설정", expanded=False):
             deep = _deep_controls(index, basic, frame)
         specs.append(ChartSpec.model_validate({**basic, "advanced": advanced, "deep": deep}))

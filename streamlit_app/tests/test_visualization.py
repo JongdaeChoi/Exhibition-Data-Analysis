@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
+
 import matplotlib
 import pandas as pd
 import pytest
+from matplotlib.patches import Circle
 from pydantic import ValidationError
 
 matplotlib.use("Agg")
@@ -146,3 +149,118 @@ def test_donut_orders_slices_and_legend_by_label_or_value() -> None:
     result = build_visualization(frame, [by_label], FigureSpec(grid_size=1))
     legend_labels = [text.get_text() for text in result.figure.axes[0].get_legend().texts]
     assert legend_labels == ["1", "2", "3", "4", "5"]
+
+
+def test_data_label_style_position_and_visibility(sample_frame: pd.DataFrame) -> None:
+    styled = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        show_values=True,
+        advanced={
+            "label_position_mode": "manual",
+            "label_offset_x": 7,
+            "label_offset_y": 11,
+            "label_font_size": 14,
+            "label_color": "#FF0000",
+            "top_n": None,
+        },
+    )
+    result = build_visualization(sample_frame, [styled], FigureSpec(grid_size=1))
+    labels = result.figure.axes[0].texts
+    assert labels
+    assert labels[0].get_position() == (7, 11)
+    assert labels[0].get_fontsize() == 14
+    assert labels[0].get_color().lower() == "#ff0000"
+
+    hidden = styled.model_copy(update={"show_values": False})
+    hidden_result = build_visualization(sample_frame, [hidden], FigureSpec(grid_size=1))
+    assert not hidden_result.figure.axes[0].texts
+
+
+def test_donut_geometry_center_style_and_pie_label_modes() -> None:
+    frame = pd.DataFrame({"만족도": ["1", "2", "2", "3"]})
+    spec = ChartSpec(
+        chart_type="pie",
+        x="만족도",
+        advanced={
+            "donut": True,
+            "donut_hole_size": 0.45,
+            "donut_ring_width": 0.35,
+            "donut_center_color": "#FFF7ED",
+            "donut_center_border": True,
+            "donut_center_border_color": "#EA580C",
+            "donut_center_border_width": 2,
+            "pie_label_mode": "label_ratio",
+            "top_n": None,
+        },
+    )
+    result = build_visualization(frame, [spec], FigureSpec(grid_size=1))
+    axis = result.figure.axes[0]
+    centers = [patch for patch in axis.patches if isinstance(patch, Circle)]
+    assert centers and centers[0].get_radius() == pytest.approx(0.45)
+    assert centers[0].get_linewidth() == pytest.approx(2)
+    texts = [text.get_text() for text in axis.texts]
+    assert {"1", "2", "3"}.issubset(texts)
+    assert any("%" in text for text in texts)
+    with pytest.raises(ValidationError):
+        ChartSpec(
+            chart_type="pie",
+            x="만족도",
+            advanced={"donut": True, "donut_hole_size": 0.8, "donut_ring_width": 0.4},
+        )
+
+
+def test_reference_lines_support_category_and_numeric_axes(sample_frame: pd.DataFrame) -> None:
+    spec = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        deep={
+            "reference_enabled": True,
+            "reference_targets": ["x", "y"],
+            "reference_line_style": ":",
+            "reference_line_width": 2.5,
+            "reference_line_alpha": 0.6,
+            "reference_label": "기준",
+            "reference_label_size": 12,
+            "reference_label_alpha": 0.7,
+            "x_reference_kind": "category",
+            "x_reference_value": "한국",
+            "y_reference_kind": "numeric",
+            "y_reference_value": 1.5,
+        },
+    )
+    result = build_visualization(sample_frame, [spec], FigureSpec(grid_size=1))
+    axis = result.figure.axes[0]
+    reference_lines = [line for line in axis.lines if line.get_linestyle() == ":"]
+    assert len(reference_lines) == 2
+    assert all(line.get_linewidth() == pytest.approx(2.5) for line in reference_lines)
+    assert all(line.get_alpha() == pytest.approx(0.6) for line in reference_lines)
+    assert [text.get_text() for text in axis.texts].count("기준") == 2
+
+
+def test_reference_line_supports_date_axis() -> None:
+    frame = pd.DataFrame(
+        {
+            "조사일자": pd.to_datetime(["2025-01-01", "2025-02-01", "2025-03-01"]),
+            "매출": [10, 20, 15],
+        }
+    )
+    spec = ChartSpec(
+        chart_type="line",
+        x="조사일자",
+        value_column="매출",
+        aggregation="sum",
+        deep={
+            "reference_enabled": True,
+            "reference_targets": ["x"],
+            "reference_line_style": "--",
+            "reference_label": "기준일",
+            "x_reference_kind": "date",
+            "x_reference_value": date(2025, 2, 1),
+        },
+    )
+    result = build_visualization(frame, [spec], FigureSpec(grid_size=1))
+    axis = result.figure.axes[0]
+    reference_lines = [line for line in axis.lines if line.get_linestyle() == "--"]
+    assert len(reference_lines) == 1
+    assert "기준일" in [text.get_text() for text in axis.texts]
