@@ -42,11 +42,11 @@ def _number_or_none(label: str, key: str, disabled: bool = False) -> float | Non
     return st.number_input(label, value=0.0, key=key, disabled=disabled)
 
 
-def _figure_controls(grid_size: int) -> FigureSpec:
+def _figure_controls(rows: int, columns: int) -> FigureSpec:
     st.markdown("### Figure 공통 설정")
     c1, c2, c3 = st.columns(3)
-    width = c1.number_input("Figure 가로", 4.0, 30.0, float(max(10, grid_size * 6)), 0.5, key="viz_fig_width")
-    height = c2.number_input("Figure 세로", 3.0, 30.0, float(max(7, grid_size * 5)), 0.5, key="viz_fig_height")
+    width = c1.number_input("Figure 가로", 4.0, 30.0, float(max(10, columns * 6)), 0.5, key="viz_fig_width")
+    height = c2.number_input("Figure 세로", 3.0, 30.0, float(max(7, rows * 5)), 0.5, key="viz_fig_height")
     dpi = c3.number_input("DPI", 72, 600, 120, 10, key="viz_dpi")
     c4, c5, c6 = st.columns(3)
     figure_background = c4.color_picker("Figure 배경색", "#FFFFFF", key="viz_figure_bg")
@@ -66,7 +66,8 @@ def _figure_controls(grid_size: int) -> FigureSpec:
         key="viz_font_family",
     )
     return FigureSpec(
-        grid_size=grid_size,
+        rows=rows,
+        columns=columns,
         width=width,
         height=height,
         dpi=dpi,
@@ -725,14 +726,23 @@ def render_visualization() -> None:
         horizontal=True,
         key="visualization_request_method",
     )
-    grid_size = st.selectbox(
-        "subplot 구성",
-        [1, 2, 3],
-        format_func=lambda size: f"{size} × {size}",
-        key="visualization_grid_size",
+    st.markdown("#### subplot 구성")
+    layout_row, layout_column = st.columns(2)
+    rows = int(
+        layout_row.number_input(
+            "행(Row) 개수", min_value=1, max_value=3, value=1, step=1,
+            key="visualization_subplot_rows",
+        )
     )
-    chart_count = int(grid_size) ** 2
-    figure_spec = _figure_controls(int(grid_size))
+    columns = int(
+        layout_column.number_input(
+            "열(Column) 개수", min_value=1, max_value=3, value=1, step=1,
+            key="visualization_subplot_columns",
+        )
+    )
+    chart_count = rows * columns
+    st.caption(f"{rows} × {columns} 구성 · 차트 설정 {chart_count}개")
+    figure_spec = _figure_controls(rows, columns)
     try:
         if method == "텍스트 요청":
             request = st.text_area(

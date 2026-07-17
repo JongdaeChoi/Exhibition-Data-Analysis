@@ -136,15 +136,15 @@ def build_visualization(
     chart_specs: list[ChartSpec],
     figure_spec: FigureSpec,
 ) -> VisualizationResult:
-    expected = figure_spec.grid_size**2
+    expected = figure_spec.rows * figure_spec.columns
     if len(chart_specs) != expected:
-        raise ValueError(f"{figure_spec.grid_size}×{figure_spec.grid_size} subplot에는 {expected}개 차트 설정이 필요합니다.")
+        raise ValueError(f"{figure_spec.rows}×{figure_spec.columns} subplot에는 {expected}개 차트 설정이 필요합니다.")
     plt.rcParams["font.family"] = figure_spec.font_family
     plt.rcParams["text.color"] = figure_spec.font_color
     plt.rcParams["axes.unicode_minus"] = False
     fig, axes = plt.subplots(
-        figure_spec.grid_size,
-        figure_spec.grid_size,
+        figure_spec.rows,
+        figure_spec.columns,
         figsize=(figure_spec.width, figure_spec.height),
         dpi=figure_spec.dpi,
         squeeze=False,

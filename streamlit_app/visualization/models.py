@@ -190,7 +190,8 @@ class ChartSpec(BaseModel):
 class FigureSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    grid_size: int = Field(default=1, ge=1, le=3)
+    rows: int = Field(default=1, ge=1, le=3)
+    columns: int = Field(default=1, ge=1, le=3)
     width: float = Field(default=12.0, ge=4.0, le=30.0)
     height: float = Field(default=8.0, ge=3.0, le=30.0)
     dpi: int = Field(default=120, ge=72, le=600)

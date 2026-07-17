@@ -62,13 +62,30 @@ def test_all_chart_builders_and_exports(sample_frame: pd.DataFrame) -> None:
         ChartSpec(chart_type="scatter_bubble", x="매출", y="만족도", aggregation="count"),
         ChartSpec(chart_type="heatmap", x="국가", y="연도", aggregation="ratio"),
     ]
-    result = build_visualization(sample_frame, specs, FigureSpec(grid_size=2))
+    result = build_visualization(sample_frame, specs, FigureSpec(rows=2, columns=2))
     assert len(result.artifacts) == 4
     assert figure_to_bytes(result, "png").startswith(b"\x89PNG")
     assert figure_to_bytes(result, "pdf").startswith(b"%PDF")
     payload = source_payload(result, "sample.csv")
     assert len(payload["charts"]) == 4
     assert all(len(chart["insight"].splitlines()) <= 3 for chart in payload["charts"])
+
+
+def test_rectangular_subplot_layout_and_chart_count(sample_frame: pd.DataFrame) -> None:
+    specs = [
+        ChartSpec(chart_type="bar", x="국가"),
+        ChartSpec(chart_type="line", x="연도", aggregation="sum", value_column="매출"),
+    ]
+    figure_spec = FigureSpec(rows=1, columns=2)
+    result = build_visualization(sample_frame, specs, figure_spec)
+    grid = result.figure.axes[0].get_subplotspec().get_gridspec()
+    assert (grid.nrows, grid.ncols) == (1, 2)
+    assert len(result.artifacts) == 2
+
+    with pytest.raises(ValueError, match="1×2 subplot에는 2개"):
+        build_visualization(sample_frame, specs[:1], figure_spec)
+    with pytest.raises(ValidationError):
+        FigureSpec(rows=0, columns=1)
 
 
 def test_text_request_uses_variables_in_sentence_order(sample_frame: pd.DataFrame) -> None:
@@ -108,7 +125,7 @@ def test_grouped_bar_value_labels_line_curvature_and_numeric_axis(sample_frame: 
         show_values=True,
         advanced={"bar_mode": "grouped", "top_n": None},
     )
-    grouped_result = build_visualization(sample_frame, [grouped], FigureSpec(grid_size=1))
+    grouped_result = build_visualization(sample_frame, [grouped], FigureSpec(rows=1, columns=1))
     assert any(text.get_text() for text in grouped_result.figure.axes[0].texts)
 
     curved = ChartSpec(
@@ -123,7 +140,7 @@ def test_grouped_bar_value_labels_line_curvature_and_numeric_axis(sample_frame: 
             "y_tick_interval": 20,
         },
     )
-    curved_result = build_visualization(sample_frame, [curved], FigureSpec(grid_size=1))
+    curved_result = build_visualization(sample_frame, [curved], FigureSpec(rows=1, columns=1))
     axis = curved_result.figure.axes[0]
     assert max(len(line.get_xdata()) for line in axis.lines) > sample_frame["매출"].nunique()
     assert axis.get_ylim() == pytest.approx((0, 100))
@@ -146,7 +163,7 @@ def test_donut_orders_slices_and_legend_by_label_or_value() -> None:
     )
     value_table = build_statistics(frame, by_value)
     assert value_table.iloc[0]["만족도"] == "4"
-    result = build_visualization(frame, [by_label], FigureSpec(grid_size=1))
+    result = build_visualization(frame, [by_label], FigureSpec(rows=1, columns=1))
     legend_labels = [text.get_text() for text in result.figure.axes[0].get_legend().texts]
     assert legend_labels == ["1", "2", "3", "4", "5"]
 
@@ -165,7 +182,7 @@ def test_data_label_style_position_and_visibility(sample_frame: pd.DataFrame) ->
             "top_n": None,
         },
     )
-    result = build_visualization(sample_frame, [styled], FigureSpec(grid_size=1))
+    result = build_visualization(sample_frame, [styled], FigureSpec(rows=1, columns=1))
     labels = result.figure.axes[0].texts
     assert labels
     assert labels[0].get_position() == (7, 11)
@@ -173,7 +190,7 @@ def test_data_label_style_position_and_visibility(sample_frame: pd.DataFrame) ->
     assert labels[0].get_color().lower() == "#ff0000"
 
     hidden = styled.model_copy(update={"show_values": False})
-    hidden_result = build_visualization(sample_frame, [hidden], FigureSpec(grid_size=1))
+    hidden_result = build_visualization(sample_frame, [hidden], FigureSpec(rows=1, columns=1))
     assert not hidden_result.figure.axes[0].texts
 
 
@@ -194,7 +211,7 @@ def test_donut_geometry_center_style_and_pie_label_modes() -> None:
             "top_n": None,
         },
     )
-    result = build_visualization(frame, [spec], FigureSpec(grid_size=1))
+    result = build_visualization(frame, [spec], FigureSpec(rows=1, columns=1))
     axis = result.figure.axes[0]
     centers = [patch for patch in axis.patches if isinstance(patch, Circle)]
     assert centers and centers[0].get_radius() == pytest.approx(0.45)
@@ -229,7 +246,7 @@ def test_reference_lines_support_category_and_numeric_axes(sample_frame: pd.Data
             "y_reference_value": 1.5,
         },
     )
-    result = build_visualization(sample_frame, [spec], FigureSpec(grid_size=1))
+    result = build_visualization(sample_frame, [spec], FigureSpec(rows=1, columns=1))
     axis = result.figure.axes[0]
     reference_lines = [line for line in axis.lines if line.get_linestyle() == ":"]
     assert len(reference_lines) == 2
@@ -259,7 +276,7 @@ def test_reference_line_supports_date_axis() -> None:
             "x_reference_value": date(2025, 2, 1),
         },
     )
-    result = build_visualization(frame, [spec], FigureSpec(grid_size=1))
+    result = build_visualization(frame, [spec], FigureSpec(rows=1, columns=1))
     axis = result.figure.axes[0]
     reference_lines = [line for line in axis.lines if line.get_linestyle() == "--"]
     assert len(reference_lines) == 1
