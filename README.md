@@ -33,7 +33,7 @@ python ".\데이터분석_API(gradio).py"
 - 차트 요청: Gemini가 구조화한 Pydantic 설정을 기존 통계·차트 함수로 검증 및 실행
 - 저장·복원: 대화와 차트가 포함된 JSON, 읽기용 Markdown 다운로드 및 기존 인사이트 업로드
 
-Colab에서는 Secrets에 `exhibition` 이름으로 Gemini API 키를 등록합니다. 로컬 실행에서는 화면의 비밀번호 입력란이나 `GEMINI_API_KEY` 환경변수를 사용할 수 있습니다. API 키는 다운로드 파일에 저장되지 않습니다.
+Colab에서는 Secrets에 `exhibition` 이름으로 Gemini API 키를 등록합니다. `Streamlit_Colab_Test.ipynb`가 이 값을 Streamlit 프로세스의 `GEMINI_API_KEY` 환경변수로 전달합니다. 로컬 실행에서는 화면의 비밀번호 입력란이나 같은 환경변수를 사용할 수 있습니다. API 키는 다운로드 파일에 저장되지 않습니다.
 
 ## 처음 한 번: GitHub 저장소 연결
 

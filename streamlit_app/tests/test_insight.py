@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 
 import pandas as pd
 import pytest
@@ -14,6 +16,7 @@ from insight.service import (
     history_payload_bytes,
     restore_history,
 )
+from ui.insight_view import _configured_api_key
 
 
 @pytest.fixture
@@ -125,3 +128,21 @@ def test_invalid_chart_is_replanned_once(monkeypatch, sample_frames) -> None:
     assert corrections[0] is None
     assert "찾을 수 없습니다" in corrections[1]
     assert execution.message.charts
+
+
+def test_api_key_lookup_does_not_access_colab_kernel(monkeypatch) -> None:
+    class UnavailableUserData:
+        @staticmethod
+        def get(name: str):
+            raise AssertionError("Streamlit 프로세스에서 Colab 커널을 조회하면 안 됩니다.")
+
+    fake_colab = types.ModuleType("google.colab")
+    fake_colab.userdata = UnavailableUserData()
+    monkeypatch.setitem(sys.modules, "google.colab", fake_colab)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    api_key, source = _configured_api_key("")
+
+    assert api_key is None
+    assert source == "미설정"

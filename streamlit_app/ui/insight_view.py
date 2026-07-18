@@ -30,14 +30,6 @@ def _configured_api_key(entered: str) -> tuple[str | None, str]:
                 return str(value), f"Streamlit secrets {name}"
     except (FileNotFoundError, KeyError, AttributeError):
         pass
-    try:
-        from google.colab import userdata
-
-        value = userdata.get("exhibition")
-        if value:
-            return str(value), "Colab Secrets exhibition"
-    except (ImportError, ModuleNotFoundError, RuntimeError, KeyError):
-        pass
     return None, "미설정"
 
 
@@ -89,13 +81,13 @@ def render_insight() -> None:
         )
         entered_key = key_col.text_input(
             "Gemini API Key (선택)", type="password", key="insight_api_key_input",
-            help="Colab Secrets의 exhibition 또는 GEMINI_API_KEY가 있으면 입력하지 않아도 됩니다.",
+            help="Colab 테스트 노트북이 exhibition Secret을 GEMINI_API_KEY로 전달하거나, 직접 입력할 수 있습니다.",
         )
         api_key, key_source = _configured_api_key(entered_key)
         if api_key:
             st.success(f"API 인증 준비 완료 · {key_source}")
         else:
-            st.warning("Colab Secrets에 `exhibition`을 등록하거나 Gemini API Key를 입력하세요.")
+            st.warning("`GEMINI_API_KEY`를 설정하거나 Gemini API Key를 입력하세요.")
 
         upload_col, clear_col = st.columns([3, 1], gap="small")
         uploaded = upload_col.file_uploader(
