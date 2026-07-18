@@ -24,6 +24,17 @@ python ".\데이터분석_API(gradio).py"
 
 모드에서 `파이썬 코드 자동 실행`을 선택하면 Gemini가 반환한 Python 코드 블록을 제한된 분석 환경에서 실행합니다. 실행 상태, 표, 차트는 모델의 코드 응답 바로 다음에 채팅 메시지로 순서대로 표시됩니다. 파일·프로세스·네트워크 접근과 임의 모듈 import는 차단됩니다.
 
+## Streamlit Business Insight
+
+`streamlit_app`의 **인사이트** 단계는 현재 `df_clean`, 전처리 이력, 기술통계와 저장된 시각화 통계자료를 Gemini에 전달합니다.
+
+- 지원 모델: `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.1-pro-preview`
+- 텍스트 요청: 설명, 분석 또는 보고형 Markdown 답변
+- 차트 요청: Gemini가 구조화한 Pydantic 설정을 기존 통계·차트 함수로 검증 및 실행
+- 저장·복원: 대화와 차트가 포함된 JSON, 읽기용 Markdown 다운로드 및 기존 인사이트 업로드
+
+Colab에서는 Secrets에 `exhibition` 이름으로 Gemini API 키를 등록합니다. 로컬 실행에서는 화면의 비밀번호 입력란이나 `GEMINI_API_KEY` 환경변수를 사용할 수 있습니다. API 키는 다운로드 파일에 저장되지 않습니다.
+
 ## 처음 한 번: GitHub 저장소 연결
 
 GitHub에서 빈 저장소를 만든 뒤, 이 폴더의 PowerShell에서 아래 명령을 실행합니다.

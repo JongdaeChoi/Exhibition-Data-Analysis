@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
@@ -26,9 +28,21 @@ MISSING_METHODS = ["처리 안 함", "특정값", "평균값", "중앙값", "해
 
 
 def _apply_result(result) -> None:
+    before = st.session_state.df_clean
     st.session_state.df_clean = result.frame
     st.session_state.preprocessing_notice = result.message
     st.session_state.preprocessing_revision = int(st.session_state.get("preprocessing_revision", 0)) + 1
+    history = list(st.session_state.get("preprocessing_history", []))
+    history.append(
+        {
+            "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "message": result.message,
+            "affected_rows": int(result.affected_rows),
+            "before_shape": list(before.shape),
+            "after_shape": list(result.frame.shape),
+        }
+    )
+    st.session_state.preprocessing_history = history[-100:]
     st.rerun()
 
 
@@ -204,9 +218,21 @@ def render_preprocessing() -> None:
         hide_index=True,
     )
     if st.button("전처리 전체 초기화", key="reset_preprocessing"):
+        before_shape = list(st.session_state.df_clean.shape)
         st.session_state.df_clean = st.session_state.df.copy(deep=True)
         st.session_state.preprocessing_revision = int(st.session_state.get("preprocessing_revision", 0)) + 1
         st.session_state.preprocessing_notice = "df_clean을 원본 상태로 초기화했습니다."
+        history = list(st.session_state.get("preprocessing_history", []))
+        history.append(
+            {
+                "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "message": "df_clean을 원본 상태로 초기화했습니다.",
+                "affected_rows": 0,
+                "before_shape": before_shape,
+                "after_shape": list(st.session_state.df_clean.shape),
+            }
+        )
+        st.session_state.preprocessing_history = history[-100:]
         st.rerun()
 
     st.subheader("최종 전처리 데이터 다운로드")

@@ -17,9 +17,14 @@ SESSION_DEFAULTS = {
     "preprocessing_notice": None,
     "preprocessing_section": "결측값",
     "preprocessing_revision": 0,
+    "preprocessing_history": [],
     "visualization_result": None,
     "visualization_sources": [],
     "visualization_notice": None,
+    "insight_history": [],
+    "insight_model": "gemini-2.5-flash",
+    "insight_notice": None,
+    "insight_error": None,
 }
 
 
@@ -41,9 +46,14 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.preprocessing_notice = None
     st.session_state.preprocessing_section = "결측값"
     st.session_state.preprocessing_revision = 0
+    st.session_state.preprocessing_history = []
     st.session_state.visualization_result = None
     st.session_state.visualization_sources = []
     st.session_state.visualization_notice = None
+    st.session_state.insight_history = []
+    st.session_state.insight_model = "gemini-2.5-flash"
+    st.session_state.insight_notice = None
+    st.session_state.insight_error = None
 
 
 def has_dataset() -> bool:

@@ -50,6 +50,11 @@ def test_heavy_sections_render_only_when_selected() -> None:
     assert "전처리" not in [header.value for header in app.header]
     assert "데이터 시각화" in [header.value for header in app.header]
 
+    app.segmented_control[0].set_value("인사이트")
+    app.run()
+    assert not app.exception
+    assert "Business Insight" in [header.value for header in app.header]
+
 
 def test_local_upload_opens_fast_basic_stage() -> None:
     app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()

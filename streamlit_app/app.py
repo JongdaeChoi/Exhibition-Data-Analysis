@@ -102,7 +102,7 @@ if has_dataset():
     st.subheader("3. 작업 단계")
     stage = st.segmented_control(
         "표시할 작업",
-        ["기본 현황", "전처리", "시각화"],
+        ["기본 현황", "전처리", "시각화", "인사이트"],
         selection_mode="single",
         key="analysis_stage",
         help="선택한 단계만 실행하여 데이터 적재 후 화면 표시 속도를 높입니다.",
@@ -120,5 +120,11 @@ if has_dataset():
 
         st.divider()
         render_visualization()
+    elif stage == "인사이트":
+        # Gemini SDK and report context are loaded only when Insight is selected.
+        from ui.insight_view import render_insight
+
+        st.divider()
+        render_insight()
 else:
     st.info("파일을 선택하고 적재하면 데이터 기본 현황이 여기에 표시됩니다.")
