@@ -171,7 +171,9 @@ def build_visualization(
         figsize=(figure_spec.width, figure_spec.height),
         dpi=figure_spec.dpi,
         squeeze=False,
-        constrained_layout=figure_spec.constrained_layout,
+        sharex=figure_spec.share_x,
+        sharey=figure_spec.share_y,
+        constrained_layout=figure_spec.layout_mode == "constrained",
     )
     fig.patch.set_facecolor(to_rgba(figure_spec.figure_background, figure_spec.figure_alpha))
     if figure_spec.figure_border_width > 0:
@@ -183,19 +185,31 @@ def build_visualization(
             )
         )
     artifacts = []
-    for ax, spec in zip(axes.flat, chart_specs):
-        ax.set_facecolor(figure_spec.axes_background)
+    for index, (ax, spec) in enumerate(zip(axes.flat, chart_specs), 1):
+        style_axes = figure_spec.axes_style_scope == "all" or figure_spec.axes_target_index == index
+        ax.set_facecolor(
+            to_rgba(figure_spec.axes_background, figure_spec.axes_background_alpha)
+            if style_axes else "#FFFFFF"
+        )
+        if style_axes:
+            for position, spine in ax.spines.items():
+                visible = figure_spec.axes_border_visible and position in figure_spec.axes_border_positions
+                spine.set_visible(visible)
+                if visible:
+                    spine.set_linewidth(figure_spec.axes_border_width)
+                    spine.set_color(to_rgba(figure_spec.axes_border_color, figure_spec.axes_border_alpha))
+                    spine.set_linestyle(figure_spec.axes_border_style)
         table = build_statistics(frame, spec)
         render_chart(ax, table, spec)
         artifacts.append(ChartArtifact(spec=spec, statistics=table, insight=summarize_artifact(table, spec)))
-    if not figure_spec.constrained_layout:
+    if figure_spec.layout_mode in {"basic", "custom"}:
         fig.subplots_adjust(
             left=figure_spec.margin_left, right=figure_spec.margin_right,
             bottom=figure_spec.margin_bottom, top=figure_spec.margin_top,
             wspace=figure_spec.horizontal_space, hspace=figure_spec.vertical_space,
         )
-        if figure_spec.tight_layout:
-            fig.tight_layout()
+    elif figure_spec.layout_mode == "tight":
+        fig.tight_layout()
     return VisualizationResult(figure=fig, artifacts=artifacts, figure_spec=figure_spec)
 
 

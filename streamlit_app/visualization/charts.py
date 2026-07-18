@@ -9,9 +9,9 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba
 from matplotlib.container import BarContainer
-from matplotlib.dates import date2num
+from matplotlib.dates import DateConverter, DateFormatter, DayLocator, MonthLocator, WeekdayLocator, YearLocator, date2num
 from matplotlib.patches import Circle, Shadow
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 from matplotlib.transforms import offset_copy
 
 from visualization.models import ChartSpec
@@ -24,10 +24,25 @@ def _palette(name: str, count: int) -> list:
         return list(sns.color_palette("viridis", max(count, 1)))
 
 
+def _legend_kwargs(spec: ChartSpec) -> dict:
+    location = spec.advanced.legend_location
+    if location == "outside_right":
+        return {"loc": "center left", "bbox_to_anchor": (1.02, 0.5)}
+    if location == "outside_bottom":
+        return {"loc": "upper center", "bbox_to_anchor": (0.5, -0.14)}
+    return {"loc": location}
+
+
 def _format_value(value: float, spec: ChartSpec) -> str:
     suffix = "%" if spec.aggregation.value == "ratio" or spec.advanced.bar_mode == "stacked_100" else spec.advanced.unit
     try:
-        return f"{value:{spec.advanced.number_format}}{suffix}"
+        display_value = abs(value) if value < 0 and spec.advanced.label_negative_format == "parentheses" else value
+        text = f"{display_value:{spec.advanced.number_format}}{suffix}"
+        if value < 0 and spec.advanced.label_negative_format == "parentheses":
+            return f"({text})"
+        if value > 0 and spec.advanced.label_positive_sign:
+            return f"+{text}"
+        return text
     except (ValueError, TypeError):
         return f"{value:,.1f}{suffix}"
 
@@ -49,14 +64,19 @@ def _label_bar_containers(
     for container in containers:
         values = [bar.get_width() if horizontal else bar.get_height() for bar in container]
         labels = [_format_value(value, spec) if value else "" for value in values]
-        if spec.advanced.label_position_mode == "auto":
+        if spec.advanced.label_position_mode != "manual":
+            position = spec.advanced.label_position_mode
+            centered = stacked or position in {"inside", "center"}
             ax.bar_label(
                 container,
                 labels=labels,
-                label_type="center" if stacked else "edge",
-                padding=0 if stacked else 3,
+                label_type="center" if centered else "edge",
+                padding=0 if centered else 3,
                 fontsize=spec.advanced.label_font_size,
+                fontweight=spec.advanced.label_font_weight,
                 color=spec.advanced.label_color,
+                alpha=spec.advanced.label_alpha,
+                rotation=spec.advanced.label_rotation,
             )
             continue
         for bar, label in zip(container, labels):
@@ -75,7 +95,10 @@ def _label_bar_containers(
                 ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom",
                 fontsize=spec.advanced.label_font_size,
+                fontweight=spec.advanced.label_font_weight,
                 color=spec.advanced.label_color,
+                alpha=spec.advanced.label_alpha,
+                rotation=spec.advanced.label_rotation,
             )
 
 
@@ -149,26 +172,87 @@ def _apply_reference_lines(ax: Axes, spec: ChartSpec) -> None:
             )
             if axis == "x":
                 ax.axvline(coordinate, **kwargs)
-                if reference.label:
-                    ax.text(coordinate, 0.98, reference.label, transform=ax.get_xaxis_transform(),
-                            ha="left", va="top", fontsize=reference.label_size,
-                            color=reference.color, alpha=reference.label_alpha)
+                if reference.label and reference.label_visible:
+                    y, va = {"start": (0.02, "bottom"), "center": (0.5, "center"), "end": (0.98, "top")}[reference.label_position]
+                    label_transform = offset_copy(
+                        ax.get_xaxis_transform(), fig=ax.figure, x=reference.label_pad, units="points"
+                    )
+                    ax.text(coordinate, y, reference.label, transform=label_transform,
+                            ha="left", va=va, fontsize=reference.label_size,
+                            fontweight=reference.label_weight,
+                            color=reference.label_color or reference.color, alpha=reference.label_alpha)
             else:
                 ax.axhline(coordinate, **kwargs)
-                if reference.label:
-                    ax.text(0.98, coordinate, reference.label, transform=ax.get_yaxis_transform(),
-                            ha="right", va="bottom", fontsize=reference.label_size,
-                            color=reference.color, alpha=reference.label_alpha)
+                if reference.label and reference.label_visible:
+                    x, ha = {"start": (0.02, "left"), "center": (0.5, "center"), "end": (0.98, "right")}[reference.label_position]
+                    label_transform = offset_copy(
+                        ax.get_yaxis_transform(), fig=ax.figure, y=reference.label_pad, units="points"
+                    )
+                    ax.text(x, coordinate, reference.label, transform=label_transform,
+                            ha=ha, va="bottom", fontsize=reference.label_size,
+                            fontweight=reference.label_weight,
+                            color=reference.label_color or reference.color, alpha=reference.label_alpha)
 
 
 def _apply_annotations(ax: Axes, spec: ChartSpec) -> None:
     for note in spec.deep.annotations:
-        ax.text(
-            note.x, note.y, note.text,
-            transform=ax.transAxes if note.coordinate == "axes" else ax.transData,
-            fontsize=note.size, fontweight=note.weight, color=note.color, alpha=note.alpha,
-            ha=note.horizontal_alignment, va=note.vertical_alignment,
+        transform = ax.transAxes if note.coordinate == "axes" else ax.transData
+        box = (
+            dict(facecolor=note.box_color, alpha=note.box_alpha, edgecolor=note.box_edge_color,
+                 linestyle=note.box_line_style)
+            if note.box_visible else None
         )
+        arrowprops = dict(arrowstyle="->", color=note.color) if note.arrow_visible else None
+        ax.annotate(
+            note.text, xy=(note.arrow_x, note.arrow_y) if note.arrow_visible else (note.x, note.y),
+            xytext=(note.x, note.y), xycoords=transform, textcoords=transform,
+            fontsize=note.size, fontweight=note.weight, color=note.color, alpha=note.alpha,
+            ha=note.horizontal_alignment, va=note.vertical_alignment, rotation=note.rotation,
+            bbox=box, arrowprops=arrowprops,
+        )
+
+
+def _apply_date_ticks(ax: Axes, spec: ChartSpec) -> None:
+    frequency_map = {
+        "day": DayLocator(), "week": WeekdayLocator(), "month": MonthLocator(),
+        "quarter": MonthLocator(interval=3), "year": YearLocator(),
+    }
+    for axis_name in ("x", "y"):
+        frequency = getattr(spec.deep, f"{axis_name}_date_tick_frequency")
+        if frequency == "auto":
+            continue
+        axis = ax.xaxis if axis_name == "x" else ax.yaxis
+        date_format = getattr(spec.deep, f"{axis_name}_date_format")
+        if isinstance(axis.get_converter(), DateConverter):
+            axis.set_major_locator(frequency_map[frequency])
+            axis.set_major_formatter(DateFormatter(date_format))
+            continue
+        labels = ax.get_xticklabels() if axis_name == "x" else ax.get_yticklabels()
+        formatted = []
+        for label in labels:
+            try:
+                formatted.append(pd.to_datetime(label.get_text()).strftime(date_format))
+            except (TypeError, ValueError):
+                formatted.append(label.get_text())
+        if axis_name == "x":
+            ax.set_xticks(ax.get_xticks(), formatted)
+        else:
+            ax.set_yticks(ax.get_yticks(), formatted)
+
+
+def _apply_numeric_tick_format(ax: Axes, spec: ChartSpec) -> None:
+    formatters = {
+        "integer": lambda value, _: f"{value:.0f}",
+        "decimal1": lambda value, _: f"{value:.1f}",
+        "decimal2": lambda value, _: f"{value:.2f}",
+        "thousands": lambda value, _: f"{value:,.0f}",
+        "percent": lambda value, _: f"{value:.1f}%",
+    }
+    for axis_name in ("x", "y"):
+        name = getattr(spec.advanced, f"{axis_name}_tick_number_format")
+        if name != "auto":
+            axis = ax.xaxis if axis_name == "x" else ax.yaxis
+            axis.set_major_formatter(FuncFormatter(formatters[name]))
 
 
 def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple[np.ndarray, np.ndarray]:
@@ -196,26 +280,44 @@ def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple
 
 def _apply_common(ax: Axes, spec: ChartSpec) -> None:
     adv = spec.advanced
-    ax.set_title(
-        spec.title or f"{spec.x} {spec.chart_type.value}", fontsize=adv.title_size,
-        fontweight=adv.title_weight, color=adv.title_color, loc=adv.title_location,
-        alpha=adv.title_alpha, pad=adv.title_pad,
+    if adv.title_visible:
+        ax.set_title(
+            spec.title or f"{spec.x} {spec.chart_type.value}", fontsize=adv.title_size,
+            fontweight=adv.title_weight, color=adv.title_color, loc=adv.title_location,
+            alpha=adv.title_alpha, pad=adv.title_pad,
+        )
+    else:
+        ax.set_title("")
+    ax.set_xlabel(
+        (spec.x_label or spec.x) if adv.x_label_visible else "", fontsize=adv.x_label_size,
+        fontweight=adv.x_label_weight, color=adv.x_label_color, alpha=adv.x_label_alpha,
+        rotation=adv.x_label_rotation, labelpad=adv.x_label_pad, loc=adv.x_label_location,
     )
-    ax.set_xlabel(spec.x_label or spec.x, fontsize=adv.axis_size, fontweight=adv.axis_weight,
-                  color=adv.axis_color, rotation=adv.x_label_rotation, labelpad=adv.x_label_pad)
-    ax.set_ylabel(spec.y_label or ("비율(%)" if spec.aggregation.value == "ratio" else "값"),
-                  fontsize=adv.axis_size, fontweight=adv.axis_weight, color=adv.axis_color,
-                  rotation=adv.y_label_rotation, labelpad=adv.y_label_pad)
+    ax.set_ylabel(
+        (spec.y_label or ("비율(%)" if spec.aggregation.value == "ratio" else "값"))
+        if adv.y_label_visible else "",
+        fontsize=adv.y_label_size, fontweight=adv.y_label_weight, color=adv.y_label_color,
+        alpha=adv.y_label_alpha, rotation=adv.y_label_rotation, labelpad=adv.y_label_pad,
+        loc=adv.y_label_location,
+    )
     ax.tick_params(axis="x", labelrotation=adv.x_tick_rotation or adv.tick_rotation,
-                   labelsize=adv.axis_size, colors=adv.tick_color)
+                   labelsize=adv.x_tick_size, colors=adv.x_tick_color,
+                   labelbottom=adv.x_tick_visible, pad=adv.x_tick_pad)
     ax.tick_params(axis="y", labelrotation=adv.y_tick_rotation,
-                   labelsize=adv.axis_size, colors=adv.tick_color)
-    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
-        label.set_fontweight(adv.tick_weight)
-        label.set_alpha(adv.tick_alpha)
-    if spec.advanced.grid:
+                   labelsize=adv.y_tick_size, colors=adv.y_tick_color,
+                   labelleft=adv.y_tick_visible, pad=adv.y_tick_pad)
+    for label in ax.get_xticklabels():
+        label.set_fontweight(adv.x_tick_weight)
+        label.set_alpha(adv.x_tick_alpha)
+    for label in ax.get_yticklabels():
+        label.set_fontweight(adv.y_tick_weight)
+        label.set_alpha(adv.y_tick_alpha)
+    if spec.advanced.grid and (adv.grid_x or adv.grid_y):
+        grid_axis = "both" if adv.grid_x and adv.grid_y else "x" if adv.grid_x else "y"
+        if adv.grid_which in {"minor", "both"}:
+            ax.minorticks_on()
         ax.grid(
-            True, axis=spec.advanced.grid_axis, linestyle=spec.advanced.grid_style,
+            True, axis=grid_axis, which=adv.grid_which, linestyle=spec.advanced.grid_style,
             linewidth=spec.advanced.grid_width, color=spec.advanced.grid_color,
             alpha=spec.advanced.grid_alpha,
         )
@@ -238,6 +340,8 @@ def _apply_common(ax: Axes, spec: ChartSpec) -> None:
         ax.invert_xaxis()
     if spec.deep.invert_y:
         ax.invert_yaxis()
+    _apply_date_ticks(ax, spec)
+    _apply_numeric_tick_format(ax, spec)
     _apply_reference_lines(ax, spec)
     _apply_annotations(ax, spec)
 
@@ -273,7 +377,7 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             _label_bar_containers(ax, [bars], spec, horizontal)
     _apply_common(ax, spec)
     if group and spec.advanced.legend:
-        ax.legend(loc=spec.advanced.legend_location, fontsize=8)
+        ax.legend(fontsize=8, **_legend_kwargs(spec))
     elif ax.get_legend() is not None:
         ax.get_legend().remove()
     if spec.advanced.bar_corner_style == "rounded":
@@ -290,6 +394,14 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         category_positions = {label: position for position, label in enumerate(categorical_labels)}
     for color, (name, part) in zip(colors, groups):
         x_values = part[spec.x]
+        physical_date_axis = "y" if spec.x_y_swap else "x"
+        if (
+            getattr(spec.deep, f"{physical_date_axis}_date_tick_frequency") != "auto"
+            or getattr(spec.deep, f"{physical_date_axis}_axis_mode") == "date_range"
+        ):
+            parsed_x = pd.to_datetime(x_values, errors="coerce", format="mixed")
+            if parsed_x.notna().all():
+                x_values = parsed_x
         y_values = part["값"].to_numpy()
         line_color = color if spec.group else spec.advanced.base_color
         if spec.advanced.line_curvature > 0:
@@ -345,7 +457,9 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 ax.annotate(
                     _format_value(y, spec), (y, x) if spec.x_y_swap else (x, y), xytext=(offset_x, offset_y),
                     textcoords="offset points", ha="center",
-                    fontsize=spec.advanced.label_font_size, color=spec.advanced.label_color,
+                    fontsize=spec.advanced.label_font_size, fontweight=spec.advanced.label_font_weight,
+                    color=spec.advanced.label_color, alpha=spec.advanced.label_alpha,
+                    rotation=spec.advanced.label_rotation,
                 )
     if categorical_labels is not None:
         ax.set_xticks(range(len(categorical_labels)), categorical_labels)
@@ -362,7 +476,7 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         except (TypeError, ValueError):
             pass
     if spec.group and spec.advanced.legend:
-        ax.legend(loc=spec.advanced.legend_location, fontsize=8)
+        ax.legend(fontsize=8, **_legend_kwargs(spec))
 
 
 def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
@@ -399,7 +513,10 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         shadow=False,
         wedgeprops=wedgeprops,
         radius=outer_radius,
-        textprops={"fontsize": spec.advanced.label_font_size, "color": spec.advanced.label_color},
+        labeldistance=1.15 if spec.advanced.label_position_mode == "outside" else 1.0,
+        textprops={"fontsize": spec.advanced.label_font_size, "fontweight": spec.advanced.label_font_weight,
+                   "color": spec.advanced.label_color, "alpha": spec.advanced.label_alpha,
+                   "rotation": spec.advanced.label_rotation},
     )
     if hasattr(pie_result, "wedges"):
         wedges = pie_result.wedges
@@ -448,9 +565,15 @@ def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 zorder=1.1,
             )
         )
-    ax.set_title(spec.title or f"{spec.x} 구성", fontsize=spec.advanced.title_size, fontweight="bold")
+    if spec.advanced.title_visible:
+        ax.set_title(
+            spec.title or f"{spec.x} 구성", fontsize=spec.advanced.title_size,
+            fontweight=spec.advanced.title_weight, color=spec.advanced.title_color,
+            loc=spec.advanced.title_location, alpha=spec.advanced.title_alpha,
+            pad=spec.advanced.title_pad,
+        )
     if spec.advanced.legend:
-        ax.legend(wedges, labels, loc=spec.advanced.legend_location, fontsize=8)
+        ax.legend(wedges, labels, fontsize=8, **_legend_kwargs(spec))
 
 
 def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
@@ -502,7 +625,7 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
         scatter = ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, c=codes, cmap=spec.advanced.palette, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
         if spec.advanced.legend:
             handles = [plt.Line2D([], [], marker="o", linestyle="", color=scatter.cmap(scatter.norm(i)), label=name) for i, name in enumerate(uniques)]
-            ax.legend(handles=handles, loc=spec.advanced.legend_location, fontsize=8)
+            ax.legend(handles=handles, fontsize=8, **_legend_kwargs(spec))
     else:
         ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
     valid = x.notna() & y.notna()
@@ -628,5 +751,14 @@ def render_chart(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     RENDERERS[spec.chart_type.value](ax, table, spec)
     legend = ax.get_legend()
     if legend is not None:
+        legend.set_title(spec.advanced.legend_title)
+        legend.set_ncols(1 if spec.advanced.legend_direction == "vertical" else max(1, len(legend.texts)))
+        legend.get_frame().set_visible(spec.advanced.legend_border_visible or spec.advanced.legend_background_alpha > 0)
+        legend.get_frame().set_facecolor(to_rgba(spec.advanced.legend_background, spec.advanced.legend_background_alpha))
+        legend.get_frame().set_edgecolor(spec.advanced.legend_border_color)
+        legend.get_frame().set_linewidth(spec.advanced.legend_border_width if spec.advanced.legend_border_visible else 0)
         for text in legend.get_texts():
             text.set_color(spec.advanced.legend_color)
+            text.set_fontsize(spec.advanced.legend_font_size)
+            text.set_fontweight(spec.advanced.legend_font_weight)
+            text.set_alpha(spec.advanced.legend_alpha)

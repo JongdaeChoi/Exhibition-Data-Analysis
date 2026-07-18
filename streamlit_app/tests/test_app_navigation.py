@@ -49,6 +49,10 @@ def test_heavy_sections_render_only_when_selected() -> None:
     assert not app.exception
     assert "전처리" not in [header.value for header in app.header]
     assert "데이터 시각화" in [header.value for header in app.header]
+    number_labels = {control.label for control in app.number_input}
+    assert {"행 개수(n1)", "열 개수(n2)"}.issubset(number_labels)
+    expander_labels = {expander.label for expander in app.expander}
+    assert {"차트·데이터 설정", "Subplot별 Axes 설정"}.issubset(expander_labels)
 
     app.segmented_control[0].set_value("인사이트")
     app.run()

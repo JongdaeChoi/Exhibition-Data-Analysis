@@ -15,7 +15,7 @@ from visualization.service import (
     source_payload,
     source_payload_bytes,
 )
-from visualization.statistics import VisualizationDataError, variable_type_table
+from visualization.statistics import VisualizationDataError, semantic_type, variable_type_table
 
 
 CHART_LABELS = {
@@ -36,6 +36,10 @@ AGGREGATION_LABELS = {
     "sum": "합계", "mean": "평균", "ratio": "비율",
 }
 NONE_OPTION = "(없음)"
+BASIC_COLORS = {
+    "흰색": "#FFFFFF", "밝은 회색": "#F8FAFC", "회색": "#CBD5E1",
+    "검정": "#111827", "파랑": "#2563EB", "주황": "#F59E0B",
+}
 
 
 def _optional_column(label: str, columns: list[str], key: str, disabled: bool = False) -> str | None:
@@ -50,46 +54,108 @@ def _number_or_none(label: str, key: str, disabled: bool = False) -> float | Non
     return st.number_input(label, value=0.0, key=key, disabled=disabled)
 
 
+def _color_control(label: str, key: str, default: str, disabled: bool = False) -> str:
+    mode_column, value_column = st.columns([1, 2], gap="small")
+    mode = mode_column.selectbox(
+        f"{label} 방식", ["basic", "hex"],
+        format_func=lambda value: "기본 색상" if value == "basic" else "HEX 직접 입력",
+        key=f"{key}_mode", disabled=disabled,
+    )
+    if mode == "basic":
+        names = list(BASIC_COLORS)
+        default_name = next((name for name, value in BASIC_COLORS.items() if value == default), names[0])
+        selected = value_column.selectbox(
+            label, names, index=names.index(default_name), key=f"{key}_basic", disabled=disabled
+        )
+        return BASIC_COLORS[selected]
+    return value_column.color_picker(label, default, key=f"{key}_hex", disabled=disabled)
+
+
 def _figure_controls(rows: int, columns: int) -> FigureSpec:
-    st.markdown("### 레이아웃·저장 설정")
-    c1, c2, c3 = st.columns(3)
-    width = c1.number_input("Figure 가로", 4.0, 30.0, float(max(10, columns * 6)), 0.5, key="viz_fig_width")
-    height = c2.number_input("Figure 세로", 3.0, 30.0, float(max(7, rows * 5)), 0.5, key="viz_fig_height")
-    dpi = c3.number_input("DPI", 72, 600, 120, 10, key="viz_dpi")
-    c4, c5, c6 = st.columns(3)
-    figure_background = c4.color_picker("Figure 배경색", "#FFFFFF", key="viz_figure_bg")
-    axes_background = c5.color_picker("차트 영역 배경색", "#FFFFFF", key="viz_axes_bg")
-    font_color = c6.color_picker("폰트 색상", "#172033", key="viz_font_color")
-    border_a, border_b, border_c, border_d = st.columns(4, gap="small")
-    figure_alpha = border_a.slider("배경 투명도", 0.0, 1.0, 1.0, 0.05, key="viz_figure_alpha")
-    figure_border_width = border_b.slider("Figure 테두리 두께", 0.0, 20.0, 0.0, 0.5, key="viz_border_width")
-    figure_border_color = border_c.color_picker("Figure 테두리 색상", "#CBD5E1", key="viz_border_color")
-    figure_border_alpha = border_d.slider("테두리 투명도", 0.0, 1.0, 1.0, 0.05, key="viz_border_alpha")
-    c7, c8, c9 = st.columns(3)
-    horizontal_space = c7.slider("subplot 가로 간격", 0.0, 1.0, 0.28, 0.02, key="viz_wspace")
-    vertical_space = c8.slider("subplot 세로 간격", 0.0, 1.0, 0.35, 0.02, key="viz_hspace")
-    filename = c9.text_input("출력 파일명", "visualization", key="viz_filename")
-    with st.expander("Figure 여백", expanded=False):
-        margin_a, margin_b, margin_c, margin_d = st.columns(4, gap="small")
-        margin_left = margin_a.slider("왼쪽", 0.0, 0.9, 0.08, 0.01, key="viz_margin_left")
-        margin_right = margin_b.slider("오른쪽", 0.1, 1.0, 0.98, 0.01, key="viz_margin_right")
-        margin_bottom = margin_c.slider("아래", 0.0, 0.9, 0.08, 0.01, key="viz_margin_bottom")
-        margin_top = margin_d.slider("위", 0.1, 1.0, 0.92, 0.01, key="viz_margin_top")
-    c10, c11, c12, c13 = st.columns(4)
-    tight_layout = c10.checkbox("tight_layout", True, key="viz_tight")
-    constrained_layout = c11.checkbox("constrained_layout", False, key="viz_constrained")
-    transparent = c12.checkbox("투명 배경", False, key="viz_transparent")
-    font_family = c13.selectbox(
-        "폰트 패밀리",
-        ["NanumGothic", "DejaVu Sans", "sans-serif"],
-        key="viz_font_family",
-    )
-    save_a, save_b = st.columns(2, gap="small")
-    output_formats = save_a.multiselect(
-        "저장 형식", ["png", "jpg", "pdf", "svg"], default=["png", "jpg", "pdf", "svg"],
-        format_func=str.upper, key="viz_output_formats",
-    )
-    include_metadata = save_b.checkbox("메타데이터 포함", True, key="viz_include_metadata")
+    st.markdown("### 레이아웃 설정")
+    with st.container(border=True):
+        st.markdown("#### 캔버스(Figure)")
+        c1, c2, c3 = st.columns(3, gap="small")
+        width = c1.number_input("가로 크기", 4.0, 30.0, float(max(10, columns * 6)), 0.5, key="viz_fig_width")
+        height = c2.number_input("세로 크기", 3.0, 30.0, float(max(7, rows * 5)), 0.5, key="viz_fig_height")
+        dpi = c3.number_input("해상도(DPI)", 72, 600, 120, 10, key="viz_dpi")
+        figure_background = _color_control("Figure 배경색", "viz_figure_bg", "#FFFFFF")
+        figure_alpha = st.slider("Figure 배경 투명도", 0.0, 1.0, 1.0, 0.05, key="viz_figure_alpha")
+        figure_border_visible = st.checkbox("Figure 테두리 표시", False, key="viz_border_visible")
+        border_a, border_b, border_c = st.columns(3, gap="small")
+        figure_border_width = border_a.slider(
+            "테두리 두께", 0.0, 20.0, 1.0, 0.5, key="viz_border_width", disabled=not figure_border_visible
+        )
+        figure_border_alpha = border_b.slider(
+            "테두리 투명도", 0.0, 1.0, 1.0, 0.05, key="viz_border_alpha", disabled=not figure_border_visible
+        )
+        figure_border_color = border_c.color_picker(
+            "테두리 색상", "#CBD5E1", key="viz_border_color", disabled=not figure_border_visible
+        )
+
+    with st.container(border=True):
+        st.markdown("#### Subplot")
+        share_a, share_b = st.columns(2, gap="small")
+        share_x = share_a.checkbox("X축 공유", False, key="viz_share_x")
+        share_y = share_b.checkbox("Y축 공유", False, key="viz_share_y")
+
+    with st.container(border=True):
+        st.markdown("#### 레이아웃 여백")
+        layout_mode = st.radio(
+            "배치 방식", ["tight", "constrained", "basic", "custom"], horizontal=True,
+            format_func=lambda value: {"tight": "Tight", "constrained": "Constrained", "basic": "Basic", "custom": "사용자 설정"}[value],
+            key="viz_layout_mode",
+        )
+        margin_left, margin_right, margin_bottom, margin_top = 0.08, 0.98, 0.08, 0.92
+        horizontal_space, vertical_space = 0.28, 0.35
+        if layout_mode == "custom":
+            margin_a, margin_b, margin_c, margin_d = st.columns(4, gap="small")
+            margin_left = margin_a.slider("Figure 내부 왼쪽", 0.0, 0.9, 0.08, 0.01, key="viz_margin_left")
+            margin_right = margin_b.slider("Figure 내부 오른쪽", 0.1, 1.0, 0.98, 0.01, key="viz_margin_right")
+            margin_bottom = margin_c.slider("Figure 내부 아래", 0.0, 0.9, 0.08, 0.01, key="viz_margin_bottom")
+            margin_top = margin_d.slider("Figure 내부 위", 0.1, 1.0, 0.92, 0.01, key="viz_margin_top")
+            space_a, space_b = st.columns(2, gap="small")
+            horizontal_space = space_a.slider("Subplot 가로 간격", 0.0, 1.5, 0.28, 0.02, key="viz_wspace")
+            vertical_space = space_b.slider("Subplot 세로 간격", 0.0, 1.5, 0.35, 0.02, key="viz_hspace")
+
+    with st.container(border=True):
+        st.markdown("#### 차트(Axes)")
+        axes_background = _color_control("Axes 배경색", "viz_axes_bg", "#FFFFFF")
+        axes_background_alpha = st.slider("Axes 배경 투명도", 0.0, 1.0, 1.0, 0.05, key="viz_axes_bg_alpha")
+        scope_a, scope_b = st.columns(2, gap="small")
+        axes_style_scope = scope_a.radio(
+            "영역별 설정", ["all", "selected"], horizontal=True,
+            format_func=lambda value: "전체 차트" if value == "all" else "선택한 Subplot",
+            key="viz_axes_scope",
+        )
+        axes_target_index = scope_b.number_input(
+            "대상 Subplot", 1, rows * columns, 1, key="viz_axes_target",
+            disabled=axes_style_scope == "all",
+        )
+        axes_border_visible = st.checkbox("Axes 테두리 표시", True, key="viz_axes_border_visible")
+        axes_border_positions = st.multiselect(
+            "테두리 위치", ["top", "bottom", "left", "right"],
+            default=["top", "bottom", "left", "right"], key="viz_axes_border_positions",
+            disabled=not axes_border_visible,
+        )
+        axes_a, axes_b, axes_c, axes_d = st.columns(4, gap="small")
+        axes_border_width = axes_a.slider("두께", 0.0, 10.0, 0.8, 0.1, key="viz_axes_border_width", disabled=not axes_border_visible)
+        axes_border_color = axes_b.color_picker("색상", "#334155", key="viz_axes_border_color", disabled=not axes_border_visible)
+        axes_border_style = axes_c.selectbox("선 스타일", ["-", "--", "-.", ":"], key="viz_axes_border_style", disabled=not axes_border_visible)
+        axes_border_alpha = axes_d.slider("투명도", 0.0, 1.0, 1.0, 0.05, key="viz_axes_border_alpha", disabled=not axes_border_visible)
+
+    with st.container(border=True):
+        st.markdown("#### 저장 설정")
+        save_a, save_b, save_c = st.columns(3, gap="small")
+        output_formats = save_a.multiselect(
+            "저장 형식", ["png", "jpg", "pdf", "svg"], default=["png"],
+            format_func=str.upper, key="viz_output_formats",
+        )
+        filename = save_b.text_input("출력 파일명", "visualization", key="viz_filename")
+        include_metadata = save_c.checkbox("메타데이터 포함", True, key="viz_include_metadata")
+        transparent = save_a.checkbox("저장 배경 투명", False, key="viz_transparent")
+        font_family = save_b.selectbox("폰트", ["NanumGothic", "DejaVu Sans", "sans-serif"], key="viz_font_family")
+        font_color = save_c.color_picker("기본 폰트 색상", "#172033", key="viz_font_color")
     return FigureSpec(
         rows=rows,
         columns=columns,
@@ -98,18 +164,30 @@ def _figure_controls(rows: int, columns: int) -> FigureSpec:
         dpi=dpi,
         figure_background=figure_background,
         figure_alpha=figure_alpha,
-        figure_border_width=figure_border_width,
+        figure_border_width=figure_border_width if figure_border_visible else 0.0,
         figure_border_color=figure_border_color,
         figure_border_alpha=figure_border_alpha,
         axes_background=axes_background,
+        axes_background_alpha=axes_background_alpha,
+        axes_border_visible=axes_border_visible,
+        axes_border_positions=axes_border_positions,
+        axes_border_width=axes_border_width,
+        axes_border_color=axes_border_color,
+        axes_border_style=axes_border_style,
+        axes_border_alpha=axes_border_alpha,
+        axes_style_scope=axes_style_scope,
+        axes_target_index=axes_target_index,
+        share_x=share_x,
+        share_y=share_y,
         horizontal_space=horizontal_space,
         vertical_space=vertical_space,
         margin_left=margin_left,
         margin_right=margin_right,
         margin_bottom=margin_bottom,
         margin_top=margin_top,
-        tight_layout=tight_layout,
-        constrained_layout=constrained_layout,
+        tight_layout=layout_mode == "tight",
+        constrained_layout=layout_mode == "constrained",
+        layout_mode=layout_mode,
         font_family=font_family,
         font_color=font_color,
         transparent=transparent,
@@ -127,6 +205,11 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
         format_func=lambda item: CHART_LABELS[item],
         key=f"{prefix}_type",
     )
+    type_signature_key = f"{prefix}_active_chart_type"
+    previous_chart_type = st.session_state.get(type_signature_key)
+    if previous_chart_type and previous_chart_type != chart_type:
+        st.info("차트 유형이 변경되어 지원하지 않는 이전 설정은 현재 ChartSpec 기본값으로 초기화됩니다.")
+    st.session_state[type_signature_key] = chart_type
     requires_y = chart_type in {"scatter_plot", "grouped_bar", "stacked_bar", "scatter_bubble", "heatmap"}
     supports_group = chart_type in {"bar", "line", "scatter_plot", "scatter_bubble"}
     has_axes = chart_type != "pie"
@@ -183,19 +266,34 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
         selected_group = None if group == NONE_OPTION else group
 
     st.markdown("##### 제목 및 표시")
+    swap_supported = chart_type not in {"pie", "histogram", "correlation_heatmap"}
+    x_y_swap = st.checkbox("X-Y 축 전환", False, key=f"{prefix}_swap", disabled=not swap_supported)
     title_key = f"{prefix}_title"
     title_signature_key = f"{prefix}_title_variable_signature"
-    title_signature = (chart_type, x, selected_y, selected_group, selected_value, tuple(variables))
+    title_signature = (chart_type, x, selected_y, selected_group, selected_value, tuple(variables), x_y_swap)
     if st.session_state.get(title_signature_key) != title_signature:
-        st.session_state[title_key] = automatic_chart_title(x, selected_y, selected_group, selected_value, *variables)
+        st.session_state[title_key] = automatic_chart_title(
+            selected_y if x_y_swap and selected_y else x,
+            x if x_y_swap and selected_y else selected_y,
+            selected_group, selected_value, *variables,
+        )
         st.session_state[title_signature_key] = title_signature
-    title = st.text_input("차트 제목", key=title_key)
+    title = st.session_state[title_key]
     x_label = ""
     y_label = ""
     if has_axes:
-        label_a, label_b = st.columns(2, gap="small")
-        x_label = label_a.text_input("X축 제목", x, key=f"{prefix}_xlabel")
-        y_label = label_b.text_input("Y축 제목", "값", key=f"{prefix}_ylabel")
+        label_signature_key = f"{prefix}_axis_label_signature"
+        label_signature = (x, selected_y, aggregation, x_y_swap)
+        if st.session_state.get(label_signature_key) != label_signature:
+            st.session_state[f"{prefix}_xlabel"] = (
+                selected_y or "값" if x_y_swap else x
+            )
+            st.session_state[f"{prefix}_ylabel"] = (
+                x if x_y_swap else (selected_y or ("비율(%)" if aggregation == "ratio" else "값"))
+            )
+            st.session_state[label_signature_key] = label_signature
+        x_label = st.session_state[f"{prefix}_xlabel"]
+        y_label = st.session_state[f"{prefix}_ylabel"]
     show_values = False
     if chart_type not in {"scatter_plot", "scatter_bubble", "heatmap", "correlation_heatmap"}:
         show_values = st.checkbox("값 표시", True, key=f"{prefix}_show_values")
@@ -226,10 +324,7 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
         "variables": variables,
         "comparison_chart": comparison_chart,
         "category_orders": category_orders,
-        "x_y_swap": st.checkbox(
-            "X-Y 축 전환", False, key=f"{prefix}_swap",
-            disabled=chart_type in {"pie", "histogram", "correlation_heatmap"},
-        ),
+        "x_y_swap": x_y_swap,
         "title": title,
         "x_label": x_label,
         "y_label": y_label,
@@ -245,7 +340,7 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
     sort_options = ["none", "ascending", "descending"]
     sort_labels = {"none": "정렬 안 함", "ascending": "오름차순", "descending": "내림차순"}
 
-    st.markdown("##### 데이터 범위와 순서")
+    st.markdown("##### 데이터 표시 범위(Chart Element Range)")
     if chart_type not in {"pie", "correlation_heatmap"}:
         sort_a, sort_b = st.columns(2, gap="small")
         values["x_sort"] = sort_a.selectbox(
@@ -254,12 +349,28 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
         values["y_sort"] = sort_b.selectbox(
             "Y축 값 정렬", sort_options, format_func=lambda item: sort_labels[item], key=f"{prefix}_y_sort"
         )
-    range_a, range_b, range_c = st.columns([1, 1, 2], gap="small")
-    top_n_enabled = range_a.checkbox("상위 N개 제한", True, key=f"{prefix}_top_enabled")
-    values["top_n"] = (
-        range_b.number_input("상위 N", 1, 500, 20, key=f"{prefix}_top") if top_n_enabled else None
+    range_a, range_b, range_c = st.columns(3, gap="small")
+    values["element_range"] = range_a.selectbox(
+        "범위 기준", ["all", "top", "bottom"],
+        format_func=lambda item: {"all": "전체", "top": "상위 N개", "bottom": "하위 N개"}[item],
+        index=1, key=f"{prefix}_element_range",
     )
-    values["include_missing"] = range_c.checkbox("결측값 포함", False, key=f"{prefix}_missing")
+    values["top_n"] = (
+        range_b.number_input("N 값", 1, 500, 20, key=f"{prefix}_top")
+        if values["element_range"] != "all" else None
+    )
+    values["rank_basis"] = range_c.selectbox(
+        "순위 기준", ["value", "ratio", "original"],
+        format_func=lambda item: {"value": "값 기준", "ratio": "비율 기준", "original": "원본 순서"}[item],
+        key=f"{prefix}_rank_basis", disabled=values["element_range"] == "all",
+    )
+    range_d, range_e = st.columns(2, gap="small")
+    values["remaining_items"] = range_d.selectbox(
+        "나머지 항목", ["exclude", "other"],
+        format_func=lambda item: "제외" if item == "exclude" else "기타 항목으로 통합",
+        key=f"{prefix}_remaining", disabled=values["element_range"] == "all",
+    )
+    values["include_missing"] = range_e.checkbox("결측값 포함", False, key=f"{prefix}_missing")
 
     st.markdown("##### 색상과 텍스트")
     if chart_type == "pie":
@@ -281,29 +392,65 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
         values["alpha"] = alpha_column.slider(
             "차트 투명도", 0.05, 1.0, 0.85, 0.05, key=f"{prefix}_alpha"
         )
+    st.markdown("##### 차트 제목(Title)")
+    values["title_visible"] = st.checkbox("제목 표시", True, key=f"{prefix}_title_visible")
+    st.text_input(
+        "제목 입력값", key=f"viz_{index}_title", disabled=not values["title_visible"],
+        help="변수 설정이 변경되면 선택된 변수명으로 자동 갱신됩니다.",
+    )
     title_a, title_b, title_c, title_d = st.columns(4, gap="small")
-    values["title_size"] = title_a.slider("제목 크기", 6, 40, 13, key=f"{prefix}_title_size")
-    values["title_weight"] = title_b.selectbox("제목 굵기", ["normal", "bold"], index=1, key=f"{prefix}_title_weight")
-    values["title_color"] = title_c.color_picker("제목 색상", "#172033", key=f"{prefix}_title_color")
-    values["title_location"] = title_d.selectbox("제목 위치", ["left", "center", "right"], index=1, key=f"{prefix}_title_location")
+    values["title_size"] = title_a.slider("크기", 6, 40, 13, key=f"{prefix}_title_size", disabled=not values["title_visible"])
+    values["title_weight"] = title_b.selectbox("굵기", ["normal", "bold"], index=1, key=f"{prefix}_title_weight", disabled=not values["title_visible"])
+    values["title_color"] = title_c.color_picker("색상", "#172033", key=f"{prefix}_title_color", disabled=not values["title_visible"])
+    values["title_location"] = title_d.selectbox("위치", ["left", "center", "right"], index=1, key=f"{prefix}_title_location", disabled=not values["title_visible"])
     title_e, title_f = st.columns(2, gap="small")
-    values["title_alpha"] = title_e.slider("제목 투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_title_alpha")
-    values["title_pad"] = title_f.slider("제목 패딩", 0.0, 100.0, 6.0, 1.0, key=f"{prefix}_title_pad")
+    values["title_alpha"] = title_e.slider("투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_title_alpha", disabled=not values["title_visible"])
+    values["title_pad"] = title_f.slider("차트 영역과 간격", 0.0, 100.0, 6.0, 1.0, key=f"{prefix}_title_pad", disabled=not values["title_visible"])
 
     if chart_type not in {"pie", "correlation_heatmap"}:
-        st.markdown("##### 축과 격자")
-        axis_a, axis_b, axis_c = st.columns(3, gap="small")
-        values["axis_size"] = axis_a.slider("축 글자 크기", 6, 30, 10, key=f"{prefix}_axis_size")
-        values["axis_weight"] = axis_b.selectbox("축 레이블 굵기", ["normal", "bold"], key=f"{prefix}_axis_weight")
-        values["grid"] = axis_c.checkbox("격자 표시", True, key=f"{prefix}_grid")
-        tick_a, tick_b, tick_c, tick_d = st.columns(4, gap="small")
-        values["x_tick_rotation"] = tick_a.slider("X Tick 회전", -180, 180, 0, 5, key=f"{prefix}_x_tick_rotation")
-        values["y_tick_rotation"] = tick_b.slider("Y Tick 회전", -180, 180, 0, 5, key=f"{prefix}_y_tick_rotation")
-        values["tick_weight"] = tick_c.selectbox("Tick 굵기", ["normal", "bold"], key=f"{prefix}_tick_weight")
-        values["tick_color"] = tick_d.color_picker("Tick 색상", "#334155", key=f"{prefix}_tick_color")
+        st.markdown("##### X축 및 Y축(Axis)")
+        for axis_name, label_location_options in (("x", ["left", "center", "right"]), ("y", ["bottom", "center", "top"])):
+            st.caption(f"{axis_name.upper()}축 라벨과 눈금 스타일")
+            st.text_input(
+                f"{axis_name.upper()}축 라벨 입력값", key=f"viz_{index}_{axis_name}label",
+                help="선택된 변수명을 기본값으로 사용합니다.",
+            )
+            label_a, label_b, label_c, label_d = st.columns(4, gap="small")
+            values[f"{axis_name}_label_visible"] = label_a.checkbox("라벨 표시", True, key=f"{prefix}_{axis_name}_label_visible")
+            values[f"{axis_name}_label_size"] = label_b.slider("라벨 크기", 6, 40, 10, key=f"{prefix}_{axis_name}_label_size")
+            values[f"{axis_name}_label_weight"] = label_c.selectbox("라벨 굵기", ["normal", "bold"], key=f"{prefix}_{axis_name}_label_weight")
+            values[f"{axis_name}_label_color"] = label_d.color_picker("라벨 색상", "#172033", key=f"{prefix}_{axis_name}_label_color")
+            label_e, label_f, label_g, label_h = st.columns(4, gap="small")
+            values[f"{axis_name}_label_alpha"] = label_e.slider("라벨 투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_{axis_name}_label_alpha")
+            values[f"{axis_name}_label_location"] = label_f.selectbox("라벨 위치", label_location_options, index=1, key=f"{prefix}_{axis_name}_label_location")
+            values[f"{axis_name}_label_rotation"] = label_g.slider("라벨 회전", -180, 180, 0 if axis_name == "x" else 90, 5, key=f"{prefix}_{axis_name}_label_rotation")
+            values[f"{axis_name}_label_pad"] = label_h.slider("축과 간격", 0.0, 100.0, 4.0, 1.0, key=f"{prefix}_{axis_name}_label_pad")
+            tick_a, tick_b, tick_c, tick_d = st.columns(4, gap="small")
+            values[f"{axis_name}_tick_visible"] = tick_a.checkbox("눈금 표시", True, key=f"{prefix}_{axis_name}_tick_visible")
+            values[f"{axis_name}_tick_size"] = tick_b.slider("눈금 크기", 4, 40, 10, key=f"{prefix}_{axis_name}_tick_size")
+            values[f"{axis_name}_tick_weight"] = tick_c.selectbox("눈금 굵기", ["normal", "bold"], key=f"{prefix}_{axis_name}_tick_weight")
+            values[f"{axis_name}_tick_color"] = tick_d.color_picker("눈금 색상", "#334155", key=f"{prefix}_{axis_name}_tick_color")
+            tick_e, tick_f, tick_g = st.columns(3, gap="small")
+            values[f"{axis_name}_tick_alpha"] = tick_e.slider("눈금 투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_{axis_name}_tick_alpha")
+            values[f"{axis_name}_tick_rotation"] = tick_f.slider("눈금 회전", -180, 180, 0, 5, key=f"{prefix}_{axis_name}_tick_rotation")
+            values[f"{axis_name}_tick_pad"] = tick_g.slider("축선과 간격", 0.0, 100.0, 3.5, 0.5, key=f"{prefix}_{axis_name}_tick_pad")
+            axis_kind, _ = _axis_kind(frame, basic, axis_name)
+            if axis_kind == "numeric":
+                values[f"{axis_name}_tick_number_format"] = st.selectbox(
+                    "숫자 표시 형식", ["auto", "integer", "decimal1", "decimal2", "thousands", "percent"],
+                    format_func=lambda value: {
+                        "auto": "자동", "integer": "정수", "decimal1": "소수점 1자리",
+                        "decimal2": "소수점 2자리", "thousands": "천 단위 구분", "percent": "백분율",
+                    }[value], key=f"{prefix}_{axis_name}_tick_number_format",
+                )
+        st.markdown("##### 격자(Grid)")
+        grid_toggle_a, grid_toggle_b = st.columns(2, gap="small")
+        values["grid_x"] = grid_toggle_a.checkbox("X축 격자", False, key=f"{prefix}_grid_x")
+        values["grid_y"] = grid_toggle_b.checkbox("Y축 격자", True, key=f"{prefix}_grid_y")
+        values["grid"] = values["grid_x"] or values["grid_y"]
         if values["grid"]:
             grid_a, grid_b, grid_c, grid_d, grid_e = st.columns(5, gap="small")
-            values["grid_axis"] = grid_a.selectbox("격자 방향", ["x", "y", "both"], index=1, key=f"{prefix}_grid_axis")
+            values["grid_which"] = grid_a.selectbox("표시 위치", ["major", "minor", "both"], key=f"{prefix}_grid_which")
             values["grid_style"] = grid_b.selectbox("격자 스타일", ["-", "--", "-.", ":"], key=f"{prefix}_grid_style")
             values["grid_width"] = grid_c.slider("격자 굵기", 0.1, 10.0, 0.7, 0.1, key=f"{prefix}_grid_width")
             values["grid_color"] = grid_d.color_picker("격자 색상", "#CBD5E1", key=f"{prefix}_grid_color")
@@ -317,10 +464,29 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
         if values["legend"]:
             values["legend_location"] = legend_b.selectbox(
                 "범례 위치",
-                ["best", "upper right", "upper left", "lower right", "lower left", "center left", "center right"],
+                ["best", "upper center", "lower center", "center left", "center right", "center", "outside_right", "outside_bottom"],
+                format_func=lambda value: {
+                    "best": "자동", "upper center": "위", "lower center": "아래",
+                    "center left": "왼쪽", "center right": "오른쪽", "center": "차트 내부",
+                    "outside_right": "차트 외부(오른쪽)", "outside_bottom": "차트 외부(아래)",
+                }[value],
                 key=f"{prefix}_legend_location",
             )
-            values["legend_color"] = st.color_picker("범례 글자색", "#172033", key=f"{prefix}_legend_color")
+            legend_c, legend_d, legend_e, legend_f = st.columns(4, gap="small")
+            values["legend_title"] = legend_c.text_input("범례 제목", key=f"{prefix}_legend_title")
+            values["legend_font_size"] = legend_d.slider("글자 크기", 4, 40, 9, key=f"{prefix}_legend_size")
+            values["legend_font_weight"] = legend_e.selectbox("글자 굵기", ["normal", "bold"], key=f"{prefix}_legend_weight")
+            values["legend_color"] = legend_f.color_picker("글자색", "#172033", key=f"{prefix}_legend_color")
+            legend_g, legend_h, legend_i = st.columns(3, gap="small")
+            values["legend_alpha"] = legend_g.slider("글자 투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_legend_alpha")
+            values["legend_direction"] = legend_h.radio("항목 방향", ["vertical", "horizontal"], horizontal=True, key=f"{prefix}_legend_direction")
+            values["legend_background_alpha"] = legend_i.slider("배경 투명도", 0.0, 1.0, 0.8, 0.05, key=f"{prefix}_legend_bg_alpha")
+            values["legend_background"] = st.color_picker("범례 배경색", "#FFFFFF", key=f"{prefix}_legend_bg")
+            values["legend_border_visible"] = st.checkbox("범례 테두리 표시", False, key=f"{prefix}_legend_border")
+            if values["legend_border_visible"]:
+                border_a, border_b = st.columns(2, gap="small")
+                values["legend_border_color"] = border_a.color_picker("범례 테두리 색상", "#CBD5E1", key=f"{prefix}_legend_border_color")
+                values["legend_border_width"] = border_b.slider("범례 테두리 두께", 0.0, 10.0, 0.8, 0.1, key=f"{prefix}_legend_border_width")
     else:
         values["legend"] = False
 
@@ -347,8 +513,8 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
             values["unit"] = format_b.text_input("표시 단위", "", key=f"{prefix}_unit")
         position_a, font_a, font_b = st.columns(3, gap="small")
         values["label_position_mode"] = position_a.selectbox(
-            "표시 위치", ["auto", "manual"],
-            format_func=lambda item: {"auto": "자동", "manual": "직접 입력"}[item],
+            "표시 위치", ["auto", "inside", "center", "edge", "outside", "manual"],
+            format_func=lambda item: {"auto": "자동", "inside": "요소 내부", "center": "요소 중앙", "edge": "요소 끝점", "outside": "요소 바깥쪽", "manual": "직접 입력"}[item],
             key=f"{prefix}_label_position",
         )
         values["label_font_size"] = font_a.slider(
@@ -356,6 +522,17 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
         )
         values["label_color"] = font_b.color_picker(
             "라벨 색상", "#172033", key=f"{prefix}_label_color"
+        )
+        font_c, font_d, font_e = st.columns(3, gap="small")
+        values["label_font_weight"] = font_c.selectbox("라벨 굵기", ["normal", "bold"], key=f"{prefix}_label_weight")
+        values["label_alpha"] = font_d.slider("라벨 투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_label_alpha")
+        values["label_rotation"] = font_e.slider("라벨 회전", -180, 180, 0, 5, key=f"{prefix}_label_rotation")
+        sign_a, sign_b = st.columns(2, gap="small")
+        values["label_positive_sign"] = sign_a.checkbox("양수에 + 표시", False, key=f"{prefix}_label_positive")
+        values["label_negative_format"] = sign_b.selectbox(
+            "음수 표시", ["minus", "parentheses"],
+            format_func=lambda value: "- 기호" if value == "minus" else "괄호",
+            key=f"{prefix}_label_negative",
         )
         if values["label_position_mode"] == "manual":
             offset_a, offset_b = st.columns(2, gap="small")
@@ -513,24 +690,29 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
 
 def _axis_kind(frame: pd.DataFrame, basic: dict, axis: str) -> tuple[str, str | None]:
     chart_type = basic["chart_type"]
+    logical_axis = axis
+    if basic.get("x_y_swap"):
+        logical_axis = "y" if axis == "x" else "x"
     if chart_type in {"pie", "correlation_heatmap"}:
         return "unavailable", None
     if chart_type == "multi_variable":
-        return ("category", None) if axis == "x" else ("numeric", None)
-    if axis == "x":
+        return ("category", None) if logical_axis == "x" else ("numeric", None)
+    if logical_axis == "x":
         column = basic["x"]
         if chart_type in {"bar", "grouped_bar", "stacked_bar", "heatmap"}:
-            return "category", column
+            return ("date" if column and semantic_type(frame[column]) == "날짜형" else "category"), column
         if chart_type == "histogram":
             return "numeric", column
     else:
         column = basic.get("y")
         if chart_type in {"grouped_bar", "stacked_bar", "heatmap"}:
-            return "category", column
+            return ("date" if column and semantic_type(frame[column]) == "날짜형" else "category"), column
         if chart_type not in {"scatter_plot", "scatter_bubble"}:
             return "numeric", None
     if column and pd.api.types.is_numeric_dtype(frame[column]):
         return "numeric", column
+    if column and semantic_type(frame[column]) == "날짜형":
+        return "date", column
     return "category", column
 
 
@@ -545,12 +727,38 @@ def _axis_controls(index: int, axis: str, kind: str, column: str | None, frame: 
         f"{axis}_category_start": None,
         f"{axis}_category_end": None,
         f"{axis}_selected_categories": [],
+        f"{axis}_date_start": None,
+        f"{axis}_date_end": None,
+        f"{axis}_date_tick_frequency": "auto",
+        f"{axis}_date_format": "%Y-%m-%d",
     }
     with st.container(border=True):
         st.markdown(f"##### {axis_name}축 제어")
         if kind == "unavailable":
             st.selectbox("축 범위", ["사용할 수 없음"], key=f"{prefix}_disabled", disabled=True)
             st.caption("이 차트 유형에서는 해당 축을 직접 제어할 수 없습니다.")
+            return result
+        if kind == "date":
+            parsed = pd.to_datetime(frame[column], errors="coerce", format="mixed").dropna() if column else pd.Series(dtype="datetime64[ns]")
+            if parsed.empty:
+                st.selectbox("날짜축 설정", ["사용할 수 없음"], key=f"{prefix}_date_empty", disabled=True)
+                return result
+            mode = st.selectbox("날짜 표시 범위", ["전체 기간", "시작일~종료일"], key=f"{prefix}_{column}_date_mode")
+            if mode == "시작일~종료일":
+                result[f"{axis}_axis_mode"] = "date_range"
+                start_col, end_col = st.columns(2, gap="small")
+                result[f"{axis}_date_start"] = start_col.date_input("시작일", parsed.min().date(), key=f"{prefix}_{column}_date_start")
+                result[f"{axis}_date_end"] = end_col.date_input("종료일", parsed.max().date(), key=f"{prefix}_{column}_date_end")
+            date_a, date_b = st.columns(2, gap="small")
+            result[f"{axis}_date_tick_frequency"] = date_a.selectbox(
+                "날짜 눈금 간격", ["auto", "day", "week", "month", "quarter", "year"],
+                format_func=lambda value: {"auto": "자동", "day": "일", "week": "주", "month": "월", "quarter": "분기", "year": "연도"}[value],
+                key=f"{prefix}_{column}_date_frequency",
+            )
+            result[f"{axis}_date_format"] = date_b.selectbox(
+                "날짜 표시 형식", ["%Y-%m-%d", "%Y-%m", "%m-%d", "%Y년 %m월", "%Y"],
+                key=f"{prefix}_{column}_date_format",
+            )
             return result
         if kind == "numeric":
             mode = st.selectbox(
@@ -741,20 +949,29 @@ def _repeatable_overlay_controls(
         with st.container(border=True):
             st.caption(f"기준선 {number + 1}")
             targets = st.multiselect(
-                "적용 대상", available, default=(["y"] if "y" in available else available[:1]),
-                format_func=lambda axis: f"{axis.upper()}축", key=f"{prefix}_ref_{number}_targets",
+                "기준선 방향", available, default=(["y"] if "y" in available else available[:1]),
+                format_func=lambda axis: "수직 기준선(X축)" if axis == "x" else "수평 기준선(Y축)",
+                key=f"{prefix}_ref_{number}_targets",
             )
             style_a, style_b, style_c, style_d = st.columns(4, gap="small")
             style = style_a.selectbox("스타일", ["-", "--", "-.", ":"], index=1, key=f"{prefix}_ref_{number}_style")
             width = style_b.slider("두께", 0.1, 10.0, 1.2, 0.1, key=f"{prefix}_ref_{number}_width")
             color = style_c.color_picker("색상", "#475569", key=f"{prefix}_ref_{number}_color")
             alpha = style_d.slider("투명도", 0.0, 1.0, 0.8, 0.05, key=f"{prefix}_ref_{number}_alpha")
-            label_a, label_b, label_c = st.columns(3, gap="small")
-            label = label_a.text_input("라벨", key=f"{prefix}_ref_{number}_label")
-            label_size = label_b.slider("라벨 크기", 4, 40, 9, key=f"{prefix}_ref_{number}_label_size")
-            label_alpha = label_c.slider("라벨 투명도", 0.0, 1.0, 0.9, 0.05, key=f"{prefix}_ref_{number}_label_alpha")
+            label_visible = st.checkbox("기준선 라벨 표시", True, key=f"{prefix}_ref_{number}_label_visible")
+            label_a, label_b, label_c, label_d = st.columns(4, gap="small")
+            label = label_a.text_input("라벨", key=f"{prefix}_ref_{number}_label", disabled=not label_visible)
+            label_position = label_b.selectbox("라벨 위치", ["start", "center", "end"], index=2, key=f"{prefix}_ref_{number}_label_position", disabled=not label_visible)
+            label_size = label_c.slider("라벨 크기", 4, 40, 9, key=f"{prefix}_ref_{number}_label_size", disabled=not label_visible)
+            label_alpha = label_d.slider("라벨 투명도", 0.0, 1.0, 0.9, 0.05, key=f"{prefix}_ref_{number}_label_alpha", disabled=not label_visible)
+            label_e, label_f, label_g = st.columns(3, gap="small")
+            label_weight = label_e.selectbox("라벨 굵기", ["normal", "bold"], key=f"{prefix}_ref_{number}_label_weight", disabled=not label_visible)
+            label_color = label_f.color_picker("라벨 색상", "#475569", key=f"{prefix}_ref_{number}_label_color", disabled=not label_visible)
+            label_pad = label_g.slider("기준선과 간격", -100.0, 100.0, 2.0, 1.0, key=f"{prefix}_ref_{number}_label_pad", disabled=not label_visible)
             entry = dict(targets=targets, style=style, width=width, color=color, alpha=alpha,
-                         label=label, label_size=label_size, label_alpha=label_alpha)
+                         label=label, label_visible=label_visible, label_position=label_position,
+                         label_size=label_size, label_weight=label_weight, label_color=label_color,
+                         label_alpha=label_alpha, label_pad=label_pad)
             for axis, kind, column in (("x", x_kind, x_column), ("y", y_kind, y_column)):
                 if axis not in targets:
                     continue
@@ -794,9 +1011,31 @@ def _repeatable_overlay_controls(
             weight = style_b.selectbox("굵기", ["normal", "bold"], key=f"{prefix}_note_{number}_weight")
             color = style_c.color_picker("색상", "#172033", key=f"{prefix}_note_{number}_color")
             alpha = style_d.slider("투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_note_{number}_alpha")
+            extra_a, extra_b, extra_c = st.columns(3, gap="small")
+            rotation = extra_a.slider("회전", -180.0, 180.0, 0.0, 5.0, key=f"{prefix}_note_{number}_rotation")
+            horizontal_alignment = extra_b.selectbox("가로 정렬", ["left", "center", "right"], index=1, key=f"{prefix}_note_{number}_ha")
+            vertical_alignment = extra_c.selectbox("세로 정렬", ["top", "center", "bottom"], index=1, key=f"{prefix}_note_{number}_va")
+            box_visible = st.checkbox("배경 상자 표시", False, key=f"{prefix}_note_{number}_box")
+            box_a, box_b, box_c, box_d = st.columns(4, gap="small")
+            box_color = box_a.color_picker("배경 색상", "#FFFFFF", key=f"{prefix}_note_{number}_box_color", disabled=not box_visible)
+            box_alpha = box_b.slider("배경 투명도", 0.0, 1.0, 0.8, 0.05, key=f"{prefix}_note_{number}_box_alpha", disabled=not box_visible)
+            box_edge_color = box_c.color_picker("테두리 색상", "#CBD5E1", key=f"{prefix}_note_{number}_box_edge", disabled=not box_visible)
+            box_line_style = box_d.selectbox("테두리 스타일", ["-", "--", "-.", ":"], key=f"{prefix}_note_{number}_box_style", disabled=not box_visible)
+            arrow_visible = st.checkbox("화살표 표시", False, key=f"{prefix}_note_{number}_arrow")
+            arrow_x = arrow_y = None
+            if arrow_visible:
+                arrow_a, arrow_b = st.columns(2, gap="small")
+                arrow_x = arrow_a.number_input("화살표 대상 X", value=x, key=f"{prefix}_note_{number}_arrow_x")
+                arrow_y = arrow_b.number_input("화살표 대상 Y", value=y, key=f"{prefix}_note_{number}_arrow_y")
             if text.strip():
                 annotations.append(dict(text=text, x=x, y=y, coordinate=coordinate, size=size,
-                                        weight=weight, color=color, alpha=alpha))
+                                        weight=weight, color=color, alpha=alpha, rotation=rotation,
+                                        horizontal_alignment=horizontal_alignment,
+                                        vertical_alignment=vertical_alignment, box_visible=box_visible,
+                                        box_color=box_color, box_alpha=box_alpha,
+                                        box_edge_color=box_edge_color, box_line_style=box_line_style,
+                                        arrow_visible=arrow_visible,
+                                        arrow_x=arrow_x, arrow_y=arrow_y))
     return references, annotations
 
 
@@ -883,11 +1122,10 @@ def _structured_specs(frame: pd.DataFrame, chart_count: int) -> list[ChartSpec]:
     for index in range(1, chart_count + 1):
         with st.container(key=f"visualization_layout_{index}"):
             st.markdown(f"## Subplot {index}")
-            with st.expander("Basic · 기본 설정", expanded=True):
+            with st.expander("차트·데이터 설정", expanded=True):
                 basic = _basic_controls(index, columns, numeric_columns)
-            with st.expander("Advanced1 · 고급 설정", expanded=False):
+            with st.expander("Subplot별 Axes 설정", expanded=False):
                 advanced = _advanced_controls(index, basic, frame)
-            with st.expander("Advanced2 · 축·기준선·주석", expanded=False):
                 deep = _deep_controls(index, basic, frame)
         specs.append(ChartSpec.model_validate({**basic, "advanced": advanced, "deep": deep}))
     return specs
@@ -978,14 +1216,20 @@ def render_visualization() -> None:
         st.dataframe(variable_type_table(frame), width="stretch", hide_index=True)
     method = st.radio(
         "시각화 요청방법",
-        ["구조화된 메뉴", "텍스트 요청"],
+        ["구조화 메뉴", "텍스트 요청"],
         horizontal=True,
         key="visualization_request_method",
     )
     st.markdown("#### Subplot 구성")
-    n = int(st.number_input("n × n의 n 값", min_value=1, max_value=3, value=1, step=1,
-                            key="visualization_subplot_n"))
-    rows = columns = n
+    subplot_a, subplot_b = st.columns(2, gap="small")
+    rows = int(subplot_a.number_input(
+        "행 개수(n1)", min_value=1, max_value=3, value=1, step=1,
+        key="visualization_subplot_rows",
+    ))
+    columns = int(subplot_b.number_input(
+        "열 개수(n2)", min_value=1, max_value=3, value=1, step=1,
+        key="visualization_subplot_columns",
+    ))
     chart_count = rows * columns
     st.caption(f"{rows} × {columns} 구성 · 차트 설정 {chart_count}개")
     figure_spec = _figure_controls(rows, columns)
@@ -1000,18 +1244,30 @@ def render_visualization() -> None:
         else:
             specs = _structured_specs(frame, chart_count)
         specs = _editable_pydantic_specs(specs, method)
-        if st.button("시각화 실행", type="primary", key="run_visualization", width="stretch"):
+        action_a, action_b = st.columns([1, 3], gap="small")
+        auto_update = action_a.checkbox(
+            "설정 변경 즉시 반영", True, key="visualization_auto_update",
+            help="첫 시각화 실행 이후 설정 변경 시 현재 차트를 자동 갱신합니다.",
+        )
+        run_requested = action_b.button(
+            "시각화 실행", type="primary", key="run_visualization", width="stretch"
+        )
+        should_build = run_requested or (
+            auto_update and st.session_state.get("visualization_result") is not None
+        )
+        if should_build:
             if not specs:
                 raise ValueError("시각화 설정을 입력하세요.")
             with st.spinner("통계자료를 구성하고 차트를 생성하고 있습니다..."):
                 result = build_visualization(frame, specs, figure_spec)
-                payload = source_payload(result, st.session_state.source_filename or "data")
                 st.session_state.visualization_result = result
-                saved_sources = list(st.session_state.get("visualization_sources", []))
-                saved_sources.append(payload)
-                st.session_state.visualization_sources = saved_sources[-20:]
-                st.session_state.visualization_notice = "시각화와 통계 source 저장을 완료했습니다."
-                st.rerun()
+                if run_requested:
+                    payload = source_payload(result, st.session_state.source_filename or "data")
+                    saved_sources = list(st.session_state.get("visualization_sources", []))
+                    saved_sources.append(payload)
+                    st.session_state.visualization_sources = saved_sources[-20:]
+                    st.session_state.visualization_notice = "시각화와 통계 source 저장을 완료했습니다."
+                    st.rerun()
     except (ValidationError, VisualizationDataError, ValueError, TypeError) as exc:
         st.error(str(exc))
     notice = st.session_state.pop("visualization_notice", None)

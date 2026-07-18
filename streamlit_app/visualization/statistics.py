@@ -93,6 +93,11 @@ def _working_data(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
                 raise VisualizationDataError(f"{axis.upper()}축 범주 범위를 현재 데이터에서 찾을 수 없습니다.")
             low, high = sorted((ordered.index(start), ordered.index(end)))
             data = data.loc[display.isin(ordered[low : high + 1])].copy()
+        elif mode == "date_range":
+            parsed = pd.to_datetime(data[column], errors="coerce", format="mixed")
+            start = pd.Timestamp(getattr(spec.deep, f"{axis}_date_start"))
+            end = pd.Timestamp(getattr(spec.deep, f"{axis}_date_end")) + pd.Timedelta(days=1)
+            data = data.loc[parsed.ge(start) & parsed.lt(end)].copy()
     if data.empty:
         raise VisualizationDataError("선택 조건에 사용할 수 있는 데이터가 없습니다.")
     return data
@@ -153,8 +158,19 @@ def _sort_and_limit(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
         except TypeError:
             order = result[column].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
             result = result.loc[order]
-    if spec.advanced.top_n:
-        result = result.head(spec.advanced.top_n)
+    if spec.advanced.top_n and spec.advanced.element_range != "all":
+        if spec.advanced.rank_basis in {"value", "ratio"} and "값" in result:
+            result = result.sort_values(
+                "값", ascending=spec.advanced.element_range == "bottom", kind="stable"
+            )
+        selected = result.head(spec.advanced.top_n)
+        if spec.advanced.remaining_items == "other" and spec.x in result and len(result) > len(selected):
+            remaining = result.loc[~result.index.isin(selected.index)].copy()
+            remaining[spec.x] = "기타"
+            group_columns = [column for column in result.columns if column != "값"]
+            other = remaining.groupby(group_columns, dropna=False, observed=False, sort=False)["값"].sum().reset_index()
+            selected = pd.concat([selected, other], ignore_index=True)
+        result = selected
     return result.reset_index(drop=True)
 
 
@@ -191,8 +207,18 @@ def build_pie_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
         table = table.loc[order]
     elif spec.advanced.pie_sort_by == "value":
         table = table.sort_values("값", ascending=ascending, kind="stable")
-    if spec.advanced.top_n:
-        table = table.head(spec.advanced.top_n)
+    if spec.advanced.top_n and spec.advanced.element_range != "all":
+        if spec.advanced.rank_basis in {"value", "ratio"}:
+            table = table.sort_values(
+                "값", ascending=spec.advanced.element_range == "bottom", kind="stable"
+            )
+        selected = table.head(spec.advanced.top_n)
+        if spec.advanced.remaining_items == "other" and len(table) > len(selected):
+            selected = pd.concat(
+                [selected, pd.DataFrame({spec.x: ["기타"], "값": [table.loc[~table.index.isin(selected.index), "값"].sum()]})],
+                ignore_index=True,
+            )
+        table = selected
     table = table.reset_index(drop=True)
     threshold = spec.advanced.pie_min_ratio
     if threshold > 0 and len(table) > 1:

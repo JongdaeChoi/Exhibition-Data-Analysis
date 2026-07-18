@@ -151,6 +151,75 @@ def test_rectangular_subplot_layout_and_chart_count(sample_frame: pd.DataFrame) 
         FigureSpec(rows=0, columns=1)
 
 
+def test_layout_modes_shared_axes_and_selected_axes_style(sample_frame: pd.DataFrame) -> None:
+    specs = [ChartSpec(chart_type="bar", x="국가"), ChartSpec(chart_type="bar", x="국가")]
+    figure_spec = FigureSpec(
+        rows=1,
+        columns=2,
+        layout_mode="custom",
+        share_y=True,
+        axes_background="#FF0000",
+        axes_background_alpha=0.25,
+        axes_border_positions=["left", "bottom"],
+        axes_border_color="#00FF00",
+        axes_style_scope="selected",
+        axes_target_index=2,
+    )
+    result = build_visualization(sample_frame, specs, figure_spec)
+    first, second = result.figure.axes[:2]
+    assert first.get_shared_y_axes().joined(first, second)
+    assert second.spines["top"].get_visible() is False
+    assert second.spines["left"].get_edgecolor()[1] == pytest.approx(1.0)
+    assert second.get_facecolor()[3] == pytest.approx(0.25)
+
+
+def test_date_axis_range_and_bottom_n_other_bucket() -> None:
+    frame = pd.DataFrame(
+        {
+            "날짜": ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-01"],
+            "지역": ["A", "B", "C", "D"],
+            "매출": [100, 50, 20, 10],
+        }
+    )
+    date_spec = ChartSpec(
+        chart_type="line", x="날짜", aggregation="sum", value_column="매출",
+        deep={"x_axis_mode": "date_range", "x_date_start": date(2025, 2, 1),
+              "x_date_end": date(2025, 3, 1), "x_date_tick_frequency": "month"},
+    )
+    assert build_statistics(frame, date_spec)["날짜"].tolist() == ["2025-02-01", "2025-03-01"]
+
+    bottom = ChartSpec(
+        chart_type="bar", x="지역", aggregation="sum", value_column="매출",
+        advanced={"element_range": "bottom", "top_n": 2, "remaining_items": "other"},
+    )
+    table = build_statistics(frame, bottom)
+    assert set(table["지역"]) == {"C", "D", "기타"}
+    assert table.loc[table["지역"].eq("기타"), "값"].iloc[0] == 150
+
+
+def test_axes_visibility_and_data_label_style(sample_frame: pd.DataFrame) -> None:
+    spec = ChartSpec(
+        chart_type="bar", x="국가", show_values=True,
+        advanced={
+            "title_visible": False,
+            "x_label_visible": False,
+            "y_label_visible": False,
+            "x_tick_visible": False,
+            "label_position_mode": "inside",
+            "label_font_weight": "bold",
+            "label_alpha": 0.5,
+            "label_rotation": 15,
+        },
+    )
+    axis = build_visualization(sample_frame, [spec], FigureSpec()).figure.axes[0]
+    assert axis.get_title() == ""
+    assert axis.get_xlabel() == ""
+    assert axis.get_ylabel() == ""
+    assert all(label.get_visible() is False for label in axis.get_xticklabels())
+    assert axis.texts and axis.texts[0].get_fontweight() == "bold"
+    assert axis.texts[0].get_alpha() == pytest.approx(0.5)
+
+
 def test_text_request_uses_variables_in_sentence_order(sample_frame: pd.DataFrame) -> None:
     spec = parse_text_request("국가별 매출 합계 막대그래프", sample_frame, 1)[0]
     assert spec.x == "국가"
