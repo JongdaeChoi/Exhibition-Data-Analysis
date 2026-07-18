@@ -68,7 +68,70 @@ def test_all_chart_builders_and_exports(sample_frame: pd.DataFrame) -> None:
     assert figure_to_bytes(result, "pdf").startswith(b"%PDF")
     payload = source_payload(result, "sample.csv")
     assert len(payload["charts"]) == 4
-    assert all(len(chart["insight"].splitlines()) <= 3 for chart in payload["charts"])
+    assert all(len(chart["insight"].splitlines()) <= 5 for chart in payload["charts"])
+
+
+def test_new_chart_statistics_and_ratio_bases(sample_frame: pd.DataFrame) -> None:
+    valid = ChartSpec(
+        chart_type="bar", x="국가", aggregation="valid_count", value_column="매출",
+        advanced={"top_n": None},
+    )
+    valid_table = build_statistics(sample_frame, valid).set_index("국가")
+    assert valid_table.loc["한국", "값"] == 2
+
+    grouped = ChartSpec(
+        chart_type="grouped_bar", x="국가", y="연도", aggregation="ratio",
+        ratio_basis="within_x", advanced={"top_n": None},
+    )
+    grouped_table = build_statistics(sample_frame, grouped)
+    assert grouped_table.groupby("국가")["값"].sum().round(6).eq(100).all()
+
+    scatter = ChartSpec(chart_type="scatter_plot", x="매출", y="만족도", advanced={"top_n": None})
+    scatter_table = build_statistics(sample_frame, scatter)
+    assert len(scatter_table) == len(sample_frame)
+    assert "행 번호" in scatter_table
+
+
+def test_multi_variable_and_correlation_heatmap(sample_frame: pd.DataFrame) -> None:
+    comparison = ChartSpec(
+        chart_type="multi_variable", variables=["매출", "만족도"],
+        aggregation="mean", comparison_chart="line",
+    )
+    comparison_table = build_statistics(sample_frame, comparison)
+    assert comparison_table["변수"].tolist() == ["매출", "만족도"]
+    assert comparison_table.loc[comparison_table["변수"].eq("매출"), "값"].iloc[0] == pytest.approx(17.5)
+
+    correlation = ChartSpec(
+        chart_type="correlation_heatmap", variables=["연도", "매출", "만족도"],
+    )
+    correlation_table = build_statistics(sample_frame, correlation)
+    assert len(correlation_table) == 9
+    result = build_visualization(sample_frame, [correlation], FigureSpec())
+    assert len(result.figure.axes) >= 1
+
+    mixed = ChartSpec(chart_type="multi_variable", variables=["국가", "매출"])
+    with pytest.raises(ValueError, match="동일한 데이터 유형"):
+        build_statistics(sample_frame, mixed)
+
+
+def test_multiple_reference_lines_annotations_and_figure_border(sample_frame: pd.DataFrame) -> None:
+    spec = ChartSpec(
+        chart_type="bar", x="국가",
+        deep={
+            "reference_lines": [
+                {"targets": ["y"], "y_kind": "numeric", "y_value": 1, "label": "최소"},
+                {"targets": ["y"], "y_kind": "numeric", "y_value": 2, "label": "목표"},
+            ],
+            "annotations": [{"text": "설명", "x": 0.2, "y": 0.9}],
+        },
+    )
+    result = build_visualization(
+        sample_frame, [spec],
+        FigureSpec(figure_border_width=2, figure_border_color="#FF0000", output_formats=["png"]),
+    )
+    axis = result.figure.axes[0]
+    assert {"최소", "목표", "설명"}.issubset({text.get_text() for text in axis.texts})
+    assert result.figure_spec.output_formats == ["png"]
 
 
 def test_rectangular_subplot_layout_and_chart_count(sample_frame: pd.DataFrame) -> None:

@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import koreanize_matplotlib  # noqa: F401 - registers bundled NanumGothic for Colab/Linux
 from matplotlib.figure import Figure
+from matplotlib.colors import to_rgba
+from matplotlib.patches import Rectangle
 
 from visualization.charts import render_chart
 from visualization.models import Aggregation, ChartSpec, ChartType, FigureSpec
@@ -58,9 +60,17 @@ def parse_text_request(text: str, frame: pd.DataFrame, chart_count: int) -> list
     for index in range(chart_count):
         sentence = parts[min(index, len(parts) - 1)]
         lowered = sentence.casefold()
-        if any(word in lowered for word in ["heatmap", "히트맵", "열지도"]):
+        if any(word in lowered for word in ["correlation", "상관 히트맵", "상관계수 행렬"]):
+            chart_type = ChartType.CORRELATION_HEATMAP
+        elif any(word in lowered for word in ["heatmap", "히트맵", "열지도"]):
             chart_type = ChartType.HEATMAP
-        elif any(word in lowered for word in ["scatter", "bubble", "산점도", "버블"]):
+        elif any(word in lowered for word in ["grouped bar", "그룹 막대"]):
+            chart_type = ChartType.GROUPED_BAR
+        elif any(word in lowered for word in ["stacked bar", "누적 막대"]):
+            chart_type = ChartType.STACKED_BAR
+        elif any(word in lowered for word in ["scatter plot", "산점도"]):
+            chart_type = ChartType.SCATTER_PLOT
+        elif any(word in lowered for word in ["bubble", "버블"]):
             chart_type = ChartType.SCATTER_BUBBLE
         elif any(word in lowered for word in ["histogram", "히스토그램", "분포"]):
             chart_type = ChartType.HISTOGRAM
@@ -81,10 +91,12 @@ def parse_text_request(text: str, frame: pd.DataFrame, chart_count: int) -> list
             if any(word in lowered for word in ["mean", "average", "평균"])
             else Aggregation.SUM
             if any(word in lowered for word in ["sum", "합계"])
+            else Aggregation.VALID_COUNT
+            if any(word in lowered for word in ["valid count", "유효값"])
             else Aggregation.COUNT
         )
         value_column = None
-        if aggregation in {Aggregation.SUM, Aggregation.MEAN}:
+        if aggregation in {Aggregation.SUM, Aggregation.MEAN, Aggregation.VALID_COUNT}:
             numeric_mentions = [c for c in mentioned if pd.api.types.is_numeric_dtype(frame[c])]
             value_column = numeric_mentions[-1] if numeric_mentions else default_y
         group = mentioned[2] if len(mentioned) > 2 else None
@@ -96,10 +108,16 @@ def parse_text_request(text: str, frame: pd.DataFrame, chart_count: int) -> list
             bar_mode = "stacked"
         else:
             bar_mode = "basic"
+        multi_types = {ChartType.CORRELATION_HEATMAP}
+        two_axis_types = {
+            ChartType.SCATTER_PLOT, ChartType.GROUPED_BAR, ChartType.STACKED_BAR,
+            ChartType.SCATTER_BUBBLE, ChartType.HEATMAP,
+        }
         spec_data = {
             "chart_type": chart_type,
-            "x": x,
-            "y": y if chart_type in {ChartType.SCATTER_BUBBLE, ChartType.HEATMAP} else None,
+            "x": "" if chart_type in multi_types else x,
+            "y": y if chart_type in two_axis_types else None,
+            "variables": mentioned if chart_type in multi_types else [],
             "group": group,
             "value_column": value_column,
             "aggregation": aggregation,
@@ -128,7 +146,12 @@ def summarize_artifact(table: pd.DataFrame, spec: ChartSpec) -> str:
             total = float(table["값"].sum())
             if total:
                 lines.append(f"최대 항목은 표시 합계의 {maximum / total * 100:,.1f}%를 차지합니다.")
-    return "\n".join(lines[:3])
+    if spec.aggregation == Aggregation.RATIO:
+        basis = {"total": "전체", "within_x": "X1 내부", "within_y": "X2 내부"}[spec.ratio_basis]
+        lines.append(f"비율의 분모 기준은 {basis}입니다.")
+    if spec.advanced.top_n and len(table) >= spec.advanced.top_n:
+        lines.append(f"차트 요소는 상위 {spec.advanced.top_n}개로 제한되었습니다.")
+    return "\n".join(lines[:5])
 
 
 def build_visualization(
@@ -150,7 +173,15 @@ def build_visualization(
         squeeze=False,
         constrained_layout=figure_spec.constrained_layout,
     )
-    fig.patch.set_facecolor(figure_spec.figure_background)
+    fig.patch.set_facecolor(to_rgba(figure_spec.figure_background, figure_spec.figure_alpha))
+    if figure_spec.figure_border_width > 0:
+        fig.add_artist(
+            Rectangle(
+                (0, 0), 1, 1, transform=fig.transFigure, fill=False,
+                edgecolor=to_rgba(figure_spec.figure_border_color, figure_spec.figure_border_alpha),
+                linewidth=figure_spec.figure_border_width,
+            )
+        )
     artifacts = []
     for ax, spec in zip(axes.flat, chart_specs):
         ax.set_facecolor(figure_spec.axes_background)
@@ -158,7 +189,11 @@ def build_visualization(
         render_chart(ax, table, spec)
         artifacts.append(ChartArtifact(spec=spec, statistics=table, insight=summarize_artifact(table, spec)))
     if not figure_spec.constrained_layout:
-        fig.subplots_adjust(wspace=figure_spec.horizontal_space, hspace=figure_spec.vertical_space)
+        fig.subplots_adjust(
+            left=figure_spec.margin_left, right=figure_spec.margin_right,
+            bottom=figure_spec.margin_bottom, top=figure_spec.margin_top,
+            wspace=figure_spec.horizontal_space, hspace=figure_spec.vertical_space,
+        )
         if figure_spec.tight_layout:
             fig.tight_layout()
     return VisualizationResult(figure=fig, artifacts=artifacts, figure_spec=figure_spec)
@@ -175,7 +210,11 @@ def figure_to_bytes(result: VisualizationResult, output_format: str) -> bytes:
         dpi=result.figure_spec.dpi,
         bbox_inches="tight",
         transparent=result.figure_spec.transparent,
-        metadata={"Title": result.figure_spec.filename} if fmt in {"png", "pdf", "svg"} else None,
+        metadata=(
+            {"Title": result.figure_spec.filename, "Creator": "Streamlit Data Visualization"}
+            if result.figure_spec.include_metadata and fmt in {"png", "pdf", "svg"}
+            else None
+        ),
     )
     return buffer.getvalue()
 

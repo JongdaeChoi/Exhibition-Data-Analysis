@@ -105,10 +105,10 @@ def _reference_coordinate(ax: Axes, axis: str, value, kind: str | None) -> float
 
 def _apply_reference_lines(ax: Axes, spec: ChartSpec) -> None:
     deep = spec.deep
-    if not deep.reference_enabled:
+    if not deep.reference_enabled and not deep.reference_lines:
         return
     color = "#D97706"
-    for axis in deep.reference_targets:
+    for axis in deep.reference_targets if deep.reference_enabled else []:
         value = getattr(deep, f"{axis}_reference_value")
         kind = getattr(deep, f"{axis}_reference_kind")
         coordinate = _reference_coordinate(ax, axis, value, kind)
@@ -136,6 +136,39 @@ def _apply_reference_lines(ax: Axes, spec: ChartSpec) -> None:
                     transform=ax.get_yaxis_transform(), ha="right", va="bottom",
                     fontsize=deep.reference_label_size, color=color, alpha=deep.reference_label_alpha,
                 )
+    for reference in deep.reference_lines:
+        for axis in reference.targets:
+            coordinate = _reference_coordinate(
+                ax, axis, getattr(reference, f"{axis}_value"), getattr(reference, f"{axis}_kind")
+            )
+            if coordinate is None:
+                continue
+            kwargs = dict(
+                color=reference.color, linestyle=reference.style,
+                linewidth=reference.width, alpha=reference.alpha,
+            )
+            if axis == "x":
+                ax.axvline(coordinate, **kwargs)
+                if reference.label:
+                    ax.text(coordinate, 0.98, reference.label, transform=ax.get_xaxis_transform(),
+                            ha="left", va="top", fontsize=reference.label_size,
+                            color=reference.color, alpha=reference.label_alpha)
+            else:
+                ax.axhline(coordinate, **kwargs)
+                if reference.label:
+                    ax.text(0.98, coordinate, reference.label, transform=ax.get_yaxis_transform(),
+                            ha="right", va="bottom", fontsize=reference.label_size,
+                            color=reference.color, alpha=reference.label_alpha)
+
+
+def _apply_annotations(ax: Axes, spec: ChartSpec) -> None:
+    for note in spec.deep.annotations:
+        ax.text(
+            note.x, note.y, note.text,
+            transform=ax.transAxes if note.coordinate == "axes" else ax.transData,
+            fontsize=note.size, fontweight=note.weight, color=note.color, alpha=note.alpha,
+            ha=note.horizontal_alignment, va=note.vertical_alignment,
+        )
 
 
 def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple[np.ndarray, np.ndarray]:
@@ -162,13 +195,30 @@ def _smooth_coordinates(x: np.ndarray, y: np.ndarray, curvature: float) -> tuple
 
 
 def _apply_common(ax: Axes, spec: ChartSpec) -> None:
-    ax.set_title(spec.title or f"{spec.x} {spec.chart_type.value}", fontsize=spec.advanced.title_size, fontweight="bold")
-    ax.set_xlabel(spec.x_label or spec.x, fontsize=spec.advanced.axis_size)
-    ax.set_ylabel(spec.y_label or ("비율(%)" if spec.aggregation.value == "ratio" else "값"), fontsize=spec.advanced.axis_size)
-    ax.tick_params(axis="x", labelrotation=spec.advanced.tick_rotation, labelsize=spec.advanced.axis_size)
-    ax.tick_params(axis="y", labelsize=spec.advanced.axis_size)
+    adv = spec.advanced
+    ax.set_title(
+        spec.title or f"{spec.x} {spec.chart_type.value}", fontsize=adv.title_size,
+        fontweight=adv.title_weight, color=adv.title_color, loc=adv.title_location,
+        alpha=adv.title_alpha, pad=adv.title_pad,
+    )
+    ax.set_xlabel(spec.x_label or spec.x, fontsize=adv.axis_size, fontweight=adv.axis_weight,
+                  color=adv.axis_color, rotation=adv.x_label_rotation, labelpad=adv.x_label_pad)
+    ax.set_ylabel(spec.y_label or ("비율(%)" if spec.aggregation.value == "ratio" else "값"),
+                  fontsize=adv.axis_size, fontweight=adv.axis_weight, color=adv.axis_color,
+                  rotation=adv.y_label_rotation, labelpad=adv.y_label_pad)
+    ax.tick_params(axis="x", labelrotation=adv.x_tick_rotation or adv.tick_rotation,
+                   labelsize=adv.axis_size, colors=adv.tick_color)
+    ax.tick_params(axis="y", labelrotation=adv.y_tick_rotation,
+                   labelsize=adv.axis_size, colors=adv.tick_color)
+    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+        label.set_fontweight(adv.tick_weight)
+        label.set_alpha(adv.tick_alpha)
     if spec.advanced.grid:
-        ax.grid(True, axis=spec.advanced.grid_axis, alpha=0.22, linewidth=0.7)
+        ax.grid(
+            True, axis=spec.advanced.grid_axis, linestyle=spec.advanced.grid_style,
+            linewidth=spec.advanced.grid_width, color=spec.advanced.grid_color,
+            alpha=spec.advanced.grid_alpha,
+        )
         ax.set_axisbelow(True)
     if spec.deep.reference_line is not None:
         ax.axhline(spec.deep.reference_line, color="#475569", linestyle="--", linewidth=1.2)
@@ -189,11 +239,12 @@ def _apply_common(ax: Axes, spec: ChartSpec) -> None:
     if spec.deep.invert_y:
         ax.invert_yaxis()
     _apply_reference_lines(ax, spec)
+    _apply_annotations(ax, spec)
 
 
 def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     group = spec.group if spec.group and spec.group in table else None
-    horizontal = spec.advanced.orientation == "horizontal"
+    horizontal = (spec.advanced.orientation == "horizontal") ^ spec.x_y_swap
     if group:
         pivot = table.pivot_table(index=spec.x, columns=group, values="값", aggfunc="sum", fill_value=0, sort=False)
         colors = _palette(spec.advanced.palette, pivot.shape[1])
@@ -205,6 +256,7 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             alpha=spec.advanced.alpha,
             edgecolor=spec.advanced.edge_color,
             linewidth=spec.advanced.edge_width,
+            width=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap) * (1.0 - spec.advanced.group_gap),
         )
         if spec.show_values:
             stacked = spec.advanced.bar_mode in {"stacked", "stacked_100"}
@@ -214,9 +266,9 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         labels = table[spec.x].astype(str)
         values = table["값"].to_numpy()
         if horizontal:
-            bars = ax.barh(labels, values, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
+            bars = ax.barh(labels, values, height=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
         else:
-            bars = ax.bar(labels, values, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
+            bars = ax.bar(labels, values, width=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
         if spec.show_values:
             _label_bar_containers(ax, [bars], spec, horizontal)
     _apply_common(ax, spec)
@@ -224,6 +276,9 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         ax.legend(loc=spec.advanced.legend_location, fontsize=8)
     elif ax.get_legend() is not None:
         ax.get_legend().remove()
+    if spec.advanced.bar_corner_style == "rounded":
+        for patch in ax.patches:
+            patch.set_joinstyle("round")
 
 
 def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
@@ -247,8 +302,8 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             x_plot, y_plot = x_plot[valid], y_values[valid]
             smooth_x, smooth_y = _smooth_coordinates(x_plot, y_plot, spec.advanced.line_curvature)
             ax.plot(
-                smooth_x,
-                smooth_y,
+                smooth_y if spec.x_y_swap else smooth_x,
+                smooth_x if spec.x_y_swap else smooth_y,
                 label=str(name) if name is not None else None,
                 color=line_color,
                 linestyle=spec.advanced.line_style,
@@ -256,8 +311,8 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 alpha=spec.advanced.alpha,
             )
             ax.plot(
-                x_plot,
-                y_plot,
+                y_plot if spec.x_y_swap else x_plot,
+                x_plot if spec.x_y_swap else y_plot,
                 linestyle="",
                 marker=spec.advanced.marker,
                 markersize=spec.advanced.marker_size,
@@ -268,8 +323,8 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             x_plot, y_plot = x_values, y_values
             smooth_x, smooth_y = x_values, y_values
             ax.plot(
-                x_values,
-                y_values,
+                y_values if spec.x_y_swap else x_values,
+                x_values if spec.x_y_swap else y_values,
                 label=str(name) if name is not None else None,
                 color=line_color,
                 linestyle=spec.advanced.line_style,
@@ -278,7 +333,7 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
                 markersize=spec.advanced.marker_size,
                 alpha=spec.advanced.alpha,
             )
-        if spec.advanced.area_fill:
+        if spec.advanced.area_fill and not spec.x_y_swap:
             try:
                 ax.fill_between(smooth_x, smooth_y, alpha=0.14, color=line_color)
             except (TypeError, ValueError):
@@ -288,13 +343,24 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             offset_x, offset_y = _label_offset(spec)
             for x, y in zip(x_plot, y_plot):
                 ax.annotate(
-                    _format_value(y, spec), (x, y), xytext=(offset_x, offset_y),
+                    _format_value(y, spec), (y, x) if spec.x_y_swap else (x, y), xytext=(offset_x, offset_y),
                     textcoords="offset points", ha="center",
                     fontsize=spec.advanced.label_font_size, color=spec.advanced.label_color,
                 )
     if categorical_labels is not None:
         ax.set_xticks(range(len(categorical_labels)), categorical_labels)
     _apply_common(ax, spec)
+    if spec.x_y_swap:
+        ax.set_xlabel(spec.y_label or ("비율(%)" if spec.aggregation.value == "ratio" else "값"))
+        ax.set_ylabel(spec.x_label or spec.x)
+    if spec.advanced.event_start is not None and spec.advanced.event_end is not None:
+        try:
+            ax.axvspan(
+                spec.advanced.event_start, spec.advanced.event_end,
+                color=spec.advanced.event_color, alpha=spec.advanced.event_alpha,
+            )
+        except (TypeError, ValueError):
+            pass
     if spec.group and spec.advanced.legend:
         ax.legend(loc=spec.advanced.legend_location, fontsize=8)
 
@@ -419,6 +485,8 @@ def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
 def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     x = pd.to_numeric(table[spec.x], errors="coerce")
     y = pd.to_numeric(table[spec.y], errors="coerce")
+    if spec.x_y_swap:
+        x, y = y, x
     size_values = pd.to_numeric(table["값"], errors="coerce").fillna(0)
     scale = spec.advanced.scatter_size
     if size_values.max() > size_values.min():
@@ -431,12 +499,12 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
         y = y + rng.normal(0, spec.deep.jitter, len(y))
     if spec.group and spec.group in table:
         codes, uniques = pd.factorize(table[spec.group].astype(str))
-        scatter = ax.scatter(x, y, s=sizes, c=codes, cmap=spec.advanced.palette, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
+        scatter = ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, c=codes, cmap=spec.advanced.palette, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
         if spec.advanced.legend:
             handles = [plt.Line2D([], [], marker="o", linestyle="", color=scatter.cmap(scatter.norm(i)), label=name) for i, name in enumerate(uniques)]
             ax.legend(handles=handles, loc=spec.advanced.legend_location, fontsize=8)
     else:
-        ax.scatter(x, y, s=sizes, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
+        ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
     valid = x.notna() & y.notna()
     if spec.advanced.trendline and valid.sum() >= 2:
         coefficients = np.polyfit(x[valid], y[valid], 1)
@@ -446,11 +514,12 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
         corr = float(np.corrcoef(x[valid], y[valid])[0, 1])
         ax.text(0.02, 0.98, f"r = {corr:.3f}", transform=ax.transAxes, va="top", fontsize=9, bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "#CBD5E1"})
     mappings = table.attrs.get("category_mappings", {})
-    if spec.x in mappings:
-        mapping = mappings[spec.x]
+    display_x, display_y = (spec.y, spec.x) if spec.x_y_swap else (spec.x, spec.y)
+    if display_x in mappings:
+        mapping = mappings[display_x]
         ax.set_xticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
-    if spec.y in mappings:
-        mapping = mappings[spec.y]
+    if display_y in mappings:
+        mapping = mappings[display_y]
         ax.set_yticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
     _apply_common(ax, spec)
     ax.set_ylabel(spec.y_label or spec.y)
@@ -458,30 +527,106 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
 
 def render_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     matrix = table.pivot_table(index=spec.y, columns=spec.x, values="값", aggfunc="sum", fill_value=0, sort=False)
+    if spec.x_y_swap:
+        matrix = matrix.T
     sns.heatmap(
         matrix,
         ax=ax,
         cmap=spec.advanced.heatmap_cmap,
         annot=spec.advanced.heatmap_annotate,
-        fmt=".1f",
+        fmt=spec.advanced.heatmap_value_format,
         cbar=spec.advanced.heatmap_colorbar,
         linewidths=spec.advanced.heatmap_linewidth,
-        linecolor=spec.advanced.edge_color,
+        linecolor=to_rgba(spec.advanced.heatmap_linecolor, spec.advanced.heatmap_linealpha),
         center=spec.deep.heatmap_center,
     )
     _apply_common(ax, spec)
-    ax.set_ylabel(spec.y_label or spec.y)
+    ax.set_ylabel(spec.x_label or spec.x if spec.x_y_swap else spec.y_label or spec.y)
+    if spec.x_y_swap:
+        ax.set_xlabel(spec.y_label or spec.y)
+
+
+def render_scatter_plot(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
+    x = pd.to_numeric(table[spec.x], errors="coerce")
+    y = pd.to_numeric(table[spec.y], errors="coerce")
+    if spec.x_y_swap:
+        x, y = y, x
+    if spec.deep.jitter:
+        rng = np.random.default_rng(42)
+        x = x + rng.normal(0, spec.deep.jitter, len(x))
+        y = y + rng.normal(0, spec.deep.jitter, len(y))
+    ax.scatter(
+        x, y, s=spec.advanced.scatter_size, marker=spec.advanced.scatter_marker,
+        color=spec.advanced.base_color, alpha=spec.advanced.alpha,
+        edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width,
+    )
+    valid = x.notna() & y.notna()
+    if spec.advanced.trendline and valid.sum() >= 2:
+        coefficients = np.polyfit(x[valid], y[valid], 1)
+        line_x = np.linspace(x[valid].min(), x[valid].max(), 100)
+        ax.plot(line_x, coefficients[0] * line_x + coefficients[1], color="#D97706", linestyle="--")
+    mappings = table.attrs.get("category_mappings", {})
+    display_x, display_y = (spec.y, spec.x) if spec.x_y_swap else (spec.x, spec.y)
+    if display_x in mappings:
+        mapping = mappings[display_x]
+        ax.set_xticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
+    if display_y in mappings:
+        mapping = mappings[display_y]
+        ax.set_yticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
+    _apply_common(ax, spec)
+    if spec.x_y_swap:
+        ax.set_xlabel(spec.y_label or spec.y)
+        ax.set_ylabel(spec.x_label or spec.x)
+
+
+def render_grouped_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
+    mode = "stacked" if spec.chart_type.value == "stacked_bar" else "grouped"
+    proxy = spec.model_copy(
+        update={"group": spec.y, "advanced": spec.advanced.model_copy(update={"bar_mode": mode})}
+    )
+    render_bar(ax, table, proxy)
+
+
+def render_multi_variable(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
+    proxy = spec.model_copy(update={"x": "변수", "group": None})
+    if spec.comparison_chart == "line":
+        render_line(ax, table, proxy)
+    else:
+        render_bar(ax, table, proxy)
+
+
+def render_correlation_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
+    matrix = table.attrs.get("correlation_matrix")
+    if matrix is None:
+        matrix = table.pivot(index="변수1", columns="변수2", values="값")
+    sns.heatmap(
+        matrix, ax=ax, vmin=-1, vmax=1, center=0,
+        cmap=spec.advanced.heatmap_cmap, annot=spec.advanced.heatmap_annotate,
+        fmt=spec.advanced.heatmap_value_format, cbar=spec.advanced.heatmap_colorbar,
+        linewidths=spec.advanced.heatmap_linewidth,
+        linecolor=to_rgba(spec.advanced.heatmap_linecolor, spec.advanced.heatmap_linealpha),
+    )
+    _apply_common(ax, spec.model_copy(update={"x": "변수", "x_label": "", "y_label": ""}))
 
 
 RENDERERS = {
     "bar": render_bar,
     "line": render_line,
+    "multi_variable": render_multi_variable,
     "pie": render_pie,
     "histogram": render_histogram,
+    "scatter_plot": render_scatter_plot,
+    "grouped_bar": render_grouped_bar,
+    "stacked_bar": render_grouped_bar,
     "scatter_bubble": render_scatter_bubble,
     "heatmap": render_heatmap,
+    "correlation_heatmap": render_correlation_heatmap,
 }
 
 
 def render_chart(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     RENDERERS[spec.chart_type.value](ax, table, spec)
+    legend = ax.get_legend()
+    if legend is not None:
+        for text in legend.get_texts():
+            text.set_color(spec.advanced.legend_color)
