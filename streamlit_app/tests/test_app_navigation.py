@@ -58,6 +58,7 @@ def test_heavy_sections_render_only_when_selected() -> None:
     app.run()
     assert not app.exception
     assert "Business Insight" in [header.value for header in app.header]
+    assert app.chat_input and not app.chat_input[0].disabled
 
 
 def test_local_upload_opens_fast_basic_stage() -> None:

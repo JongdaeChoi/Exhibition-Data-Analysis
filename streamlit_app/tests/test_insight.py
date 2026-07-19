@@ -71,6 +71,8 @@ def test_gemini_schema_uses_supported_json_schema_subset() -> None:
     assert "action" in schema["properties"]
     assert "additionalProperties" not in encoded
     assert '"default"' not in encoded
+    chart_schema = schema["$defs"]["InsightChartInput"]
+    assert "aggregation" in chart_schema["required"]
 
 
 def test_history_json_and_markdown_round_trip(sample_frames) -> None:
@@ -139,6 +141,43 @@ def test_invalid_chart_is_replanned_once(monkeypatch, sample_frames) -> None:
     assert corrections[0] is None
     assert "찾을 수 없습니다" in corrections[1]
     assert execution.message.charts
+
+
+def test_explicit_mean_chart_request_rejects_count_default(monkeypatch, sample_frames) -> None:
+    _, clean = sample_frames
+    corrections = []
+
+    def fake_plan(*args, **kwargs):
+        corrections.append(kwargs.get("correction"))
+        aggregation = "count" if len(corrections) == 1 else "mean"
+        return InsightDecision(
+            action="chart",
+            chart_spec=InsightChartInput(
+                chart_type="multi_variable",
+                variables=["매출", "연도"],
+                aggregation=aggregation,
+            ),
+        )
+
+    monkeypatch.setattr("insight.service._client", lambda api_key: object())
+    monkeypatch.setattr("insight.service.plan_request", fake_plan)
+    execution = execute_request(
+        api_key="test-key",
+        model="gemini-2.5-flash",
+        question="수치형 변수의 mean 값으로 multivariable bar chart를 그려줘",
+        frame=clean,
+        source_filename="sample.csv",
+        evidence_context="근거",
+        history=[],
+    )
+    assert corrections[0] is None
+    assert "aggregation은 count" in corrections[1]
+    chart = execution.visualization_source["charts"][0]
+    assert chart["spec"]["aggregation"] == "mean"
+    assert {row["변수"]: row["값"] for row in chart["statistics"]} == {
+        "매출": 15.0,
+        "연도": pytest.approx(2024.6666666667),
+    }
 
 
 def test_api_key_lookup_does_not_access_colab_kernel(monkeypatch) -> None:

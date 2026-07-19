@@ -247,7 +247,6 @@ def render_insight() -> None:
     typed_question = st.chat_input(
         "데이터 설명·조회·수정, 차트 또는 비즈니스 인사이트를 요청하세요.",
         key="insight_question",
-        disabled=api_key is None,
     )
     question = (
         "현재 분석 컨텍스트 전체를 근거로 비즈니스 인사이트를 작성해 주세요."
@@ -255,6 +254,11 @@ def render_insight() -> None:
         else typed_question
     )
     if question:
+        if api_key is None:
+            st.session_state.insight_error = (
+                f"{provider} API Key를 먼저 설정하세요. 입력한 질문은 실행되지 않았습니다."
+            )
+            st.rerun()
         pending_ids = set(st.session_state.get("insight_pending_attachment_ids", []))
         message_attachments = [item for item in references if item.id in pending_ids]
         user_message = InsightMessage(

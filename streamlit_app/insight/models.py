@@ -62,7 +62,9 @@ class InsightChartInput(BaseModel):
     y: str | None = None
     group: str | None = None
     value_column: str | None = None
-    aggregation: Aggregation = Aggregation.COUNT
+    aggregation: Aggregation = Field(
+        description="사용자가 요청한 집계 방식: count, valid_count, sum, mean, ratio"
+    )
     ratio_basis: Literal["total", "within_x", "within_y"] = "total"
     variables: list[str] = Field(default_factory=list)
     comparison_chart: Literal["bar", "line"] = "bar"

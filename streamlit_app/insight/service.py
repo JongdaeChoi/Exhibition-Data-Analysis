@@ -247,6 +247,21 @@ def _decision_prompt(
 """.strip()
 
 
+def _explicit_chart_aggregation(question: str):
+    normalized = question.casefold()
+    keyword_map = (
+        (("valid count", "non-null count", "유효값", "결측 제외 개수"), "valid_count"),
+        (("mean", "average", "평균"), "mean"),
+        (("sum", "total", "합계"), "sum"),
+        (("ratio", "percentage", "percent", "비율", "백분율"), "ratio"),
+        (("count", "개수", "건수"), "count"),
+    )
+    for keywords, aggregation in keyword_map:
+        if any(keyword in normalized for keyword in keywords):
+            return aggregation
+    return None
+
+
 def plan_request(
     client,
     model: str,
@@ -360,6 +375,18 @@ def execute_request(
             provider=provider,
             attachments=attachments,
         )
+        if decision.action in {"chart", "chart_with_insight"}:
+            requested_aggregation = _explicit_chart_aggregation(question)
+            actual_aggregation = decision.chart_spec.aggregation.value
+            if requested_aggregation and actual_aggregation != requested_aggregation:
+                correction = (
+                    f"사용자가 명시한 집계 방식은 {requested_aggregation}이지만 "
+                    f"ChartSpec aggregation은 {actual_aggregation}입니다. "
+                    "사용자 요청과 동일하게 수정하세요."
+                )
+                if attempt == 1:
+                    raise InsightAPIError(correction)
+                continue
         if decision.action in {"text", "business_insight"}:
             return InsightExecution(
                 message=InsightMessage(role="model", text=decision.answer.strip())
