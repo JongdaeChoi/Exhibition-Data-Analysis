@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from data.preprocessing import comparison_summary
+from insight.models import InsightAttachment
 
 
 MAX_CONTEXT_CHARS = 90_000
@@ -27,6 +28,7 @@ def build_evidence_context(
     source_filename: str | None,
     preprocessing_history: list[dict[str, Any]],
     visualization_sources: list[dict[str, Any]],
+    attachments: list[InsightAttachment] | None = None,
 ) -> str:
     """Build a bounded, source-first prompt context from the current application state."""
     profile = pd.DataFrame(
@@ -42,6 +44,16 @@ def build_evidence_context(
         descriptive = clean.describe(include="all").transpose().to_string()
     except (TypeError, ValueError):
         descriptive = clean.describe().transpose().to_string()
+    references = []
+    for item in attachments or []:
+        if item.kind == "document":
+            references.append(
+                f"파일명: {item.filename}\n형식: {item.mime_type}\n내용:\n{_clip(item.extracted_text, 15_000)}"
+            )
+        else:
+            references.append(
+                f"이미지: {item.filename} ({item.mime_type}) - 이미지 원본은 API 요청에 함께 전달됨"
+            )
     sections = [
         f"""[데이터 기본 구조]
 파일명: {source_filename or '확인되지 않음'}
@@ -58,6 +70,8 @@ def build_evidence_context(
 {_clip(clean.head(5).to_string(index=False))}""",
         f"""[Visualization 저장 통계자료]
 {_clip(_json_text(visualization_sources[-10:] or [{'message': '저장된 시각화 통계자료가 없습니다.'}]))}""",
+        f"""[사용자 업로드 참고자료]
+{_clip(chr(10).join(references) if references else '등록된 참고자료가 없습니다.')}""",
     ]
     context = "\n\n".join(sections)
     return context if len(context) <= MAX_CONTEXT_CHARS else context[:MAX_CONTEXT_CHARS] + "\n[전체 컨텍스트 길이 제한]"
@@ -73,4 +87,14 @@ def bounded_history_text(history: list[dict[str, Any]], limit: int = 25_000) -> 
         for chart in message.get("charts", []):
             source = chart.get("source", {}) if isinstance(chart, dict) else {}
             rows.append("분석가가 생성한 차트 통계: " + _clip(_json_text(source), 8_000))
+        if message.get("code"):
+            code = message["code"]
+            rows.append(
+                "분석가가 실행한 Python 코드와 결과: "
+                + _clip(_json_text(code), 8_000)
+            )
+        for attachment in message.get("attachments", []):
+            rows.append(
+                f"사용자 첨부자료: {attachment.get('filename', '')} ({attachment.get('mime_type', '')})"
+            )
     return _clip("\n\n".join(rows), limit)

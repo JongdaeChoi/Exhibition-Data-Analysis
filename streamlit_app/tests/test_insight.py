@@ -14,6 +14,7 @@ from insight.service import (
     execute_request,
     history_markdown_bytes,
     history_payload_bytes,
+    plan_request,
     restore_history,
 )
 from ui.insight_view import _configured_api_key
@@ -146,3 +147,33 @@ def test_api_key_lookup_does_not_access_colab_kernel(monkeypatch) -> None:
 
     assert api_key is None
     assert source == "미설정"
+
+
+def test_openai_provider_uses_structured_decision_api(sample_frames) -> None:
+    class Response:
+        output_parsed = InsightDecision(action="text", answer="요청한 설명입니다.")
+
+    class Responses:
+        def __init__(self):
+            self.kwargs = None
+
+        def parse(self, **kwargs):
+            self.kwargs = kwargs
+            return Response()
+
+    class Client:
+        def __init__(self):
+            self.responses = Responses()
+
+    client = Client()
+    decision = plan_request(
+        client,
+        "gpt-5.6-terra",
+        "설명해 줘",
+        "데이터 근거",
+        [],
+        provider="OpenAI",
+    )
+    assert decision.answer == "요청한 설명입니다."
+    assert client.responses.kwargs["model"] == "gpt-5.6-terra"
+    assert client.responses.kwargs["text_format"] is InsightDecision
