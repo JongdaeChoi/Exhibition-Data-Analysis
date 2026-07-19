@@ -38,6 +38,16 @@ def test_query_code_returns_table_without_mutating_frames() -> None:
     pd.testing.assert_frame_equal(result.frame, clean)
 
 
+def test_dataframe_info_stdout_is_captured() -> None:
+    original, clean = _frames()
+    result = execute_generated_code(
+        "df_clean.info()", original, clean, allow_mutation=False
+    )
+    assert result.outputs[0]["type"] == "text"
+    assert "Data columns" in result.outputs[0]["value"]
+    assert "매출" in result.outputs[0]["value"]
+
+
 def test_explicit_mutation_updates_only_clean_copy() -> None:
     original, clean = _frames()
     result = execute_generated_code(

@@ -108,6 +108,46 @@ CHART_INSIGHT_SYSTEM_PROMPT = """
 """.strip()
 
 
+_GEMINI_JSON_SCHEMA_KEYS = {
+    "$defs",
+    "$ref",
+    "type",
+    "format",
+    "title",
+    "description",
+    "enum",
+    "items",
+    "prefixItems",
+    "minItems",
+    "maxItems",
+    "minimum",
+    "maximum",
+    "anyOf",
+    "oneOf",
+    "properties",
+    "required",
+}
+
+
+def _gemini_json_schema(model: type) -> dict[str, Any]:
+    """Convert Pydantic JSON Schema to Gemini's supported structured-output subset."""
+
+    def clean(value: Any, parent: str | None = None) -> Any:
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if parent in {"properties", "$defs"}:
+            return {key: clean(item) for key, item in value.items()}
+        return {
+            key: clean(item, key)
+            for key, item in value.items()
+            if key in _GEMINI_JSON_SCHEMA_KEYS
+        }
+
+    return clean(model.model_json_schema())
+
+
 def _client(api_key: str, provider: str = "Gemini"):
     if provider == "OpenAI":
         try:
@@ -133,7 +173,10 @@ def _gemini_config(*, response_schema=None, temperature: float = 0.2):
         "max_output_tokens": 8192,
     }
     if response_schema is not None:
-        kwargs.update(response_mime_type="application/json", response_schema=response_schema)
+        kwargs.update(
+            response_mime_type="application/json",
+            response_json_schema=_gemini_json_schema(response_schema),
+        )
     return types.GenerateContentConfig(**kwargs)
 
 

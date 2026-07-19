@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import io
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from typing import Any
 
@@ -183,8 +185,10 @@ def execute_generated_code(
         "np": np,
         "display": display,
     }
+    stdout = io.StringIO()
     try:
-        exec(compile(validated, "<insight-chat>", "exec"), namespace, namespace)
+        with redirect_stdout(stdout):
+            exec(compile(validated, "<insight-chat>", "exec"), namespace, namespace)
     except Exception as exc:
         raise InsightCodeError(f"생성된 Python 코드 실행에 실패했습니다: {exc}") from exc
 
@@ -195,6 +199,9 @@ def execute_generated_code(
         raise InsightCodeError("원본 df를 변경하는 코드는 허용되지 않습니다.")
     if not allow_mutation and not candidate.equals(clean):
         raise InsightCodeError("조회 요청에서 df_clean을 수정할 수 없습니다.")
+    captured_stdout = stdout.getvalue().strip()
+    if captured_stdout:
+        outputs.append({"type": "text", "value": captured_stdout[:20_000]})
     if not outputs:
         for name in ("result_df", "summary_df", "df_result"):
             if name in namespace:

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from insight.context import build_evidence_context
 from insight.models import InsightChartInput, InsightDecision, InsightMessage
 from insight.service import (
+    _gemini_json_schema,
     execute_request,
     history_markdown_bytes,
     history_payload_bytes,
@@ -61,6 +62,15 @@ def test_insight_decision_requires_text_or_valid_chart() -> None:
     assert spec.x == "국가"
     assert spec.value_column == "매출"
     assert spec.title == "국가 · 매출"
+
+
+def test_gemini_schema_uses_supported_json_schema_subset() -> None:
+    schema = _gemini_json_schema(InsightDecision)
+    encoded = json.dumps(schema, ensure_ascii=False)
+    assert schema["type"] == "object"
+    assert "action" in schema["properties"]
+    assert "additionalProperties" not in encoded
+    assert '"default"' not in encoded
 
 
 def test_history_json_and_markdown_round_trip(sample_frames) -> None:
