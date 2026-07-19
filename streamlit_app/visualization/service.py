@@ -6,6 +6,8 @@ import json
 import re
 from dataclasses import dataclass
 
+import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

@@ -71,8 +71,7 @@ def _color_control(label: str, key: str, default: str, disabled: bool = False) -
     return value_column.color_picker(label, default, key=f"{key}_hex", disabled=disabled)
 
 
-def _figure_controls(rows: int, columns: int) -> FigureSpec:
-    st.markdown("### 레이아웃 설정")
+def _figure_controls_body(rows: int, columns: int) -> FigureSpec:
     with st.container(border=True):
         st.markdown("#### 캔버스(Figure)")
         c1, c2, c3 = st.columns(3, gap="small")
@@ -195,6 +194,11 @@ def _figure_controls(rows: int, columns: int) -> FigureSpec:
         output_formats=output_formats,
         include_metadata=include_metadata,
     )
+
+
+def _figure_controls(rows: int, columns: int) -> FigureSpec:
+    with st.expander("레이아웃 설정", expanded=False):
+        return _figure_controls_body(rows, columns)
 
 
 def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) -> dict:
@@ -1188,7 +1192,7 @@ def _render_result(result) -> None:
     )
 
 
-def render_visualization() -> None:
+def render_visualization(*, preserve_existing_result: bool = False) -> None:
     st.header("데이터 시각화")
     st.markdown(
         """
@@ -1244,6 +1248,14 @@ def render_visualization() -> None:
         else:
             specs = _structured_specs(frame, chart_count)
         specs = _editable_pydantic_specs(specs, method)
+        render_signature = json.dumps(
+            {
+                "figure": figure_spec.model_dump(mode="json"),
+                "charts": [spec.model_dump(mode="json") for spec in specs],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         action_a, action_b = st.columns([1, 3], gap="small")
         auto_update = action_a.checkbox(
             "설정 변경 즉시 반영", True, key="visualization_auto_update",
@@ -1252,8 +1264,13 @@ def render_visualization() -> None:
         run_requested = action_b.button(
             "시각화 실행", type="primary", key="run_visualization", width="stretch"
         )
+        previous_signature = st.session_state.get("visualization_last_render_signature")
         should_build = run_requested or (
-            auto_update and st.session_state.get("visualization_result") is not None
+            auto_update
+            and st.session_state.get("visualization_result") is not None
+            and previous_signature is not None
+            and render_signature != previous_signature
+            and not preserve_existing_result
         )
         if should_build:
             if not specs:
@@ -1261,6 +1278,7 @@ def render_visualization() -> None:
             with st.spinner("통계자료를 구성하고 차트를 생성하고 있습니다..."):
                 result = build_visualization(frame, specs, figure_spec)
                 st.session_state.visualization_result = result
+                st.session_state.visualization_last_render_signature = render_signature
                 if run_requested:
                     payload = source_payload(result, st.session_state.source_filename or "data")
                     saved_sources = list(st.session_state.get("visualization_sources", []))

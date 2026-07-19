@@ -20,6 +20,7 @@ from insight.service import (
     execute_request,
     history_markdown_bytes,
     history_payload_bytes,
+    rebuild_chart_record,
     restore_history,
 )
 
@@ -96,8 +97,37 @@ def _render_code(code: dict) -> None:
                 st.text(output.get("value", ""))
 
 
+def _reexecute_history_chart(
+    message_index: int,
+    chart_index: int,
+    raw_spec: str,
+) -> None:
+    try:
+        payload = json.loads(raw_spec)
+        if not isinstance(payload, dict):
+            raise ValueError("ChartSpec JSON은 하나의 객체여야 합니다.")
+        chart_record, chart_source = rebuild_chart_record(
+            st.session_state.df_clean,
+            payload,
+            st.session_state.source_filename or "data",
+        )
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        st.session_state.insight_error = f"ChartSpec 재실행 실패: {exc}"
+        st.rerun()
+    history = list(st.session_state.get("insight_history", []))
+    history[message_index]["charts"][chart_index] = chart_record.model_dump(mode="json")
+    st.session_state.insight_history = history
+    sources = list(st.session_state.get("visualization_sources", []))
+    sources.append(chart_source)
+    st.session_state.visualization_sources = sources[-20:]
+    st.session_state.insight_notice = "수정한 Pydantic ChartSpec으로 차트를 다시 실행했습니다."
+    st.session_state.insight_error = None
+    st.rerun()
+
+
 def _render_history(history: list[dict], visible_from: int = 0) -> None:
-    for message in history[visible_from:]:
+    for message_index in range(visible_from, len(history)):
+        message = history[message_index]
         if message.get("hidden"):
             continue
         role = "user" if message.get("role") == "user" else "assistant"
@@ -109,18 +139,41 @@ def _render_history(history: list[dict], visible_from: int = 0) -> None:
                     st.image(base64.b64decode(attachment["content_base64"]), width=360)
             if message.get("code"):
                 _render_code(message["code"])
-            for chart in message.get("charts", []):
+            for chart_index, chart in enumerate(message.get("charts", [])):
                 try:
                     image = base64.b64decode(chart.get("image_base64", ""))
                 except (ValueError, TypeError):
                     continue
                 if image:
-                    st.image(image, use_container_width=True)
+                    st.image(image, width="stretch")
                 source = chart.get("source", {})
                 with st.expander("차트 통계자료와 Pydantic 설정", expanded=False):
                     charts = source.get("charts", []) if isinstance(source, dict) else []
-                    for item in charts:
-                        st.json(item.get("spec", {}), expanded=False)
+                    for item_index, item in enumerate(charts):
+                        spec_json = json.dumps(
+                            item.get("spec", {}), ensure_ascii=False, indent=2
+                        )
+                        editor_key = (
+                            f"insight_chart_spec_editor_{message_index}_{chart_index}_{item_index}"
+                        )
+                        signature_key = f"{editor_key}_signature"
+                        if st.session_state.get(signature_key) != spec_json:
+                            st.session_state[signature_key] = spec_json
+                            st.session_state[editor_key] = spec_json
+                        edited_spec = st.text_area(
+                            "ChartSpec JSON 직접 수정",
+                            height=320,
+                            key=editor_key,
+                        )
+                        if st.button(
+                            "수정한 Pydantic 설정으로 차트 재실행",
+                            key=f"insight_chart_rerun_{message_index}_{chart_index}_{item_index}",
+                            type="primary",
+                            width="stretch",
+                        ):
+                            _reexecute_history_chart(
+                                message_index, chart_index, edited_spec
+                            )
                         st.dataframe(item.get("statistics", []), width="stretch", hide_index=True)
 
 
@@ -173,9 +226,18 @@ def render_insight() -> None:
             format_func=lambda value: MODEL_LABELS.get(value, value),
             help="모델을 변경해도 저장된 대화 이력은 유지됩니다.",
         )
+        key_cache = dict(st.session_state.get("insight_api_keys", {}))
+        api_widget_key = f"insight_api_key_{provider}"
+        if api_widget_key not in st.session_state:
+            st.session_state[api_widget_key] = key_cache.get(provider, "")
         entered_key = key_col.text_input(
-            f"{provider} API Key (선택)", type="password", key=f"insight_api_key_{provider}",
+            f"{provider} API Key (선택)", type="password", key=api_widget_key,
         )
+        if entered_key.strip():
+            key_cache[provider] = entered_key.strip()
+        else:
+            key_cache.pop(provider, None)
+        st.session_state.insight_api_keys = key_cache
         api_key, key_source = _configured_api_key(entered_key, provider)
         if api_key:
             st.success(f"API 인증 준비 완료 · {key_source}")

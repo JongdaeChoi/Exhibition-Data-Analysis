@@ -10,6 +10,12 @@ from data.profiler import build_basic_profile
 st.set_page_config(page_title="데이터 분석", page_icon="📊", layout="wide")
 initialize_session()
 
+# Streamlit removes widget state when a conditionally rendered stage disappears.
+# Reassign visualization keys so returning to the stage restores its controls.
+for state_key in list(st.session_state):
+    if state_key.startswith(("viz_", "visualization_")):
+        st.session_state[state_key] = st.session_state[state_key]
+
 
 def load_and_store(raw: bytes, filename: str, source: str) -> None:
     with st.status("데이터를 적재하고 있습니다...", expanded=True) as status:
@@ -83,20 +89,19 @@ if has_dataset():
     if st.session_state.basic_profile is None:
         st.session_state.basic_profile = build_basic_profile(df)
     basic_profile = st.session_state.basic_profile
-    st.subheader("2. 데이터 기본 현황")
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("파일명", st.session_state.source_filename)
-    metric_columns[1].metric("행", f"{len(df):,}")
-    metric_columns[2].metric("변수", f"{df.shape[1]:,}")
-    metric_columns[3].metric("전체 결측", f"{int(basic_profile['결측 개수'].sum()):,}")
+    with st.expander("2. 데이터 기본 현황", expanded=False):
+        metric_columns = st.columns(4)
+        metric_columns[0].metric("파일명", st.session_state.source_filename)
+        metric_columns[1].metric("행", f"{len(df):,}")
+        metric_columns[2].metric("변수", f"{df.shape[1]:,}")
+        metric_columns[3].metric("전체 결측", f"{int(basic_profile['결측 개수'].sum()):,}")
 
-    st.caption(
-        "원본 `df`와 분석용 `df_clean`을 서로 다른 복사본으로 보관하고 있습니다. "
-        "이 화면의 현황은 원본 `df` 기준입니다."
-    )
-    st.dataframe(basic_profile, width="stretch", hide_index=True)
-
-    with st.expander("원본 데이터 미리보기", expanded=False):
+        st.caption(
+            "원본 `df`와 분석용 `df_clean`을 서로 다른 복사본으로 보관하고 있습니다. "
+            "이 화면의 현황은 원본 `df` 기준입니다."
+        )
+        st.dataframe(basic_profile, width="stretch", hide_index=True)
+        st.markdown("#### 원본 데이터 미리보기")
         st.dataframe(df.head(20), width="stretch")
 
     st.subheader("3. 작업 단계")
@@ -107,6 +112,9 @@ if has_dataset():
         key="analysis_stage",
         help="선택한 단계만 실행하여 데이터 적재 후 화면 표시 속도를 높입니다.",
     )
+    previous_stage = st.session_state.get("_last_analysis_stage")
+    stage_changed = previous_stage is not None and previous_stage != stage
+    st.session_state._last_analysis_stage = stage
     if stage == "전처리":
         # Lazy import: preprocessing code and widgets are loaded only on demand.
         from ui.preprocessing_view import render_preprocessing
@@ -119,7 +127,7 @@ if has_dataset():
         from ui.visualization_view import render_visualization
 
         st.divider()
-        render_visualization()
+        render_visualization(preserve_existing_result=stage_changed)
     elif stage == "인사이트":
         # Gemini SDK and report context are loaded only when Insight is selected.
         from ui.insight_view import render_insight

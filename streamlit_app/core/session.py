@@ -19,9 +19,11 @@ SESSION_DEFAULTS = {
     "preprocessing_revision": 0,
     "preprocessing_history": [],
     "visualization_result": None,
+    "visualization_last_render_signature": None,
     "visualization_sources": [],
     "visualization_notice": None,
     "insight_history": [],
+    "insight_api_keys": {},
     "insight_provider": "Gemini",
     "insight_model": "gemini-2.5-flash",
     "insight_references": [],
@@ -52,6 +54,7 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.preprocessing_revision = 0
     st.session_state.preprocessing_history = []
     st.session_state.visualization_result = None
+    st.session_state.visualization_last_render_signature = None
     st.session_state.visualization_sources = []
     st.session_state.visualization_notice = None
     st.session_state.insight_history = []

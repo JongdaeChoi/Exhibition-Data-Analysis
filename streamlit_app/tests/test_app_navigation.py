@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 from streamlit.testing.v1 import AppTest
+
+from insight.models import InsightMessage
+from insight.service import rebuild_chart_record
+from visualization.models import ChartSpec, FigureSpec
+from visualization.service import build_visualization
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
@@ -32,6 +38,7 @@ def test_data_load_defaults_to_basic_profile_only() -> None:
     assert "전처리" not in [header.value for header in app.header]
     assert "데이터 시각화" not in [header.value for header in app.header]
     assert not app.download_button
+    assert "2. 데이터 기본 현황" in {expander.label for expander in app.expander}
 
 
 def test_heavy_sections_render_only_when_selected() -> None:
@@ -52,13 +59,66 @@ def test_heavy_sections_render_only_when_selected() -> None:
     number_labels = {control.label for control in app.number_input}
     assert {"행 개수(n1)", "열 개수(n2)"}.issubset(number_labels)
     expander_labels = {expander.label for expander in app.expander}
-    assert {"차트·데이터 설정", "Subplot별 Axes 설정"}.issubset(expander_labels)
+    assert {"레이아웃 설정", "차트·데이터 설정", "Subplot별 Axes 설정"}.issubset(expander_labels)
 
     app.segmented_control[0].set_value("인사이트")
     app.run()
     assert not app.exception
     assert "Business Insight" in [header.value for header in app.header]
     assert app.chat_input and not app.chat_input[0].disabled
+
+
+def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
+    app = _loaded_app()
+    chart_record, _ = rebuild_chart_record(
+        app.session_state.df_clean,
+        {"chart_type": "bar", "x": "참가 경로", "aggregation": "count"},
+        "sample.csv",
+    )
+    app.session_state["insight_history"] = [
+        InsightMessage(role="model", text="차트", charts=[chart_record]).model_dump(mode="json")
+    ]
+
+    app.segmented_control[0].set_value("인사이트")
+    app.run()
+    api_input = next(item for item in app.text_input if item.label.startswith("Gemini API Key"))
+    api_input.input("AIzaTestSessionOnly")
+    app.run()
+    assert app.session_state.insight_api_keys["Gemini"] == "AIzaTestSessionOnly"
+    assert any(button.label == "수정한 Pydantic 설정으로 차트 재실행" for button in app.button)
+    editor = next(item for item in app.text_area if item.label == "ChartSpec JSON 직접 수정")
+    edited_spec = json.loads(editor.value)
+    edited_spec["title"] = "사용자 수정 제목"
+    editor.input(json.dumps(edited_spec, ensure_ascii=False, indent=2))
+    app.run()
+    next(
+        button for button in app.button
+        if button.label == "수정한 Pydantic 설정으로 차트 재실행"
+    ).click()
+    app.run()
+    updated_spec = app.session_state.insight_history[0]["charts"][0]["source"]["charts"][0]["spec"]
+    assert updated_spec["title"] == "사용자 수정 제목"
+
+    app.segmented_control[0].set_value("전처리")
+    app.run()
+    app.segmented_control[0].set_value("인사이트")
+    app.run()
+    api_input = next(item for item in app.text_input if item.label.startswith("Gemini API Key"))
+    assert api_input.value == "AIzaTestSessionOnly"
+
+    visualization_result = build_visualization(
+        app.session_state.df_clean,
+        [ChartSpec(chart_type="bar", x="참가 경로", aggregation="count")],
+        FigureSpec(rows=1, columns=1),
+    )
+    app.session_state["visualization_result"] = visualization_result
+    app.segmented_control[0].set_value("전처리")
+    app.run()
+    app.segmented_control[0].set_value("시각화")
+    app.run()
+    assert not app.exception
+    assert app.session_state.visualization_result is not None
+    assert any("시각화 결과" in item.value for item in app.markdown)
 
 
 def test_local_upload_opens_fast_basic_stage() -> None:

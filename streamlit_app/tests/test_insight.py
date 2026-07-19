@@ -16,6 +16,7 @@ from insight.service import (
     history_markdown_bytes,
     history_payload_bytes,
     plan_request,
+    rebuild_chart_record,
     restore_history,
 )
 from ui.insight_view import _configured_api_key
@@ -113,6 +114,26 @@ def test_chart_request_uses_existing_visualization_pipeline(monkeypatch, sample_
     assert execution.visualization_source is not None
     assert execution.message.charts[0].image_base64.startswith("iVBOR")
     assert execution.visualization_source["charts"][0]["spec"]["chart_type"] == "bar"
+
+
+def test_edited_pydantic_spec_rebuilds_chart_with_shared_pipeline(sample_frames) -> None:
+    _, clean = sample_frames
+    record, source = rebuild_chart_record(
+        clean,
+        {
+            "chart_type": "multi_variable",
+            "variables": ["매출", "연도"],
+            "aggregation": "mean",
+            "comparison_chart": "bar",
+            "title": "수치형 평균 비교",
+        },
+        "sample.csv",
+    )
+    assert record.image_base64.startswith("iVBOR")
+    assert source["charts"][0]["spec"]["aggregation"] == "mean"
+    values = {row["변수"]: row["값"] for row in source["charts"][0]["statistics"]}
+    assert values["매출"] == 15.0
+    assert values["연도"] == pytest.approx(2024.6666666667)
 
 
 def test_invalid_chart_is_replanned_once(monkeypatch, sample_frames) -> None:

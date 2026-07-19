@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import pandas as pd
 from pydantic import ValidationError
@@ -20,7 +22,7 @@ from insight.models import (
     InsightHistoryPayload,
     InsightMessage,
 )
-from visualization.models import FigureSpec
+from visualization.models import ChartSpec, FigureSpec
 from visualization.service import build_visualization, figure_to_bytes, source_payload
 from visualization.statistics import VisualizationDataError
 
@@ -34,6 +36,30 @@ class InsightExecution:
     message: InsightMessage
     visualization_source: dict[str, Any] | None = None
     updated_frame: pd.DataFrame | None = None
+
+
+def rebuild_chart_record(
+    frame: pd.DataFrame,
+    spec_value: ChartSpec | dict[str, Any],
+    source_filename: str,
+) -> tuple[InsightChartRecord, dict[str, Any]]:
+    """Validate a ChartSpec and rebuild an Insight chart through the shared pipeline."""
+    spec = spec_value if isinstance(spec_value, ChartSpec) else ChartSpec.model_validate(spec_value)
+    result = build_visualization(
+        frame, [spec], FigureSpec(rows=1, columns=1, width=10, height=6)
+    )
+    try:
+        chart_source = source_payload(result, source_filename)
+        image = figure_to_bytes(result, "png")
+    finally:
+        plt.close(result.figure)
+    return (
+        InsightChartRecord(
+            image_base64=base64.b64encode(image).decode("ascii"),
+            source=chart_source,
+        ),
+        chart_source,
+    )
 
 
 INSIGHT_SYSTEM_PROMPT = """
@@ -417,15 +443,8 @@ def execute_request(
                 )
 
             spec = decision.chart_spec.to_chart_spec()
-            result = build_visualization(
-                frame, [spec], FigureSpec(rows=1, columns=1, width=10, height=6)
-            )
-            chart_source = source_payload(result, source_filename)
-            image = figure_to_bytes(result, "png")
-            plt.close(result.figure)
-            chart_record = InsightChartRecord(
-                image_base64=base64.b64encode(image).decode("ascii"),
-                source=chart_source,
+            chart_record, chart_source = rebuild_chart_record(
+                frame, spec, source_filename
             )
             if decision.action == "chart_with_insight":
                 answer = _chart_interpretation(
