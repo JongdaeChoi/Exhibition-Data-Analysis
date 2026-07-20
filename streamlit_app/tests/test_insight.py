@@ -136,6 +136,36 @@ def test_edited_pydantic_spec_rebuilds_chart_with_shared_pipeline(sample_frames)
     assert values["연도"] == pytest.approx(2024.6666666667)
 
 
+def test_chart_history_downloads_as_json_and_markdown(sample_frames) -> None:
+    _, clean = sample_frames
+    record, _ = rebuild_chart_record(
+        clean,
+        {
+            "chart_type": "correlation_heatmap",
+            "variables": ["매출", "연도"],
+            "aggregation": "count",
+            "title": "수치형 변수 상관관계",
+        },
+        "sample.csv",
+    )
+    history = [
+        InsightMessage(
+            role="model", text="상관관계 차트입니다.", charts=[record]
+        ).model_dump(mode="json")
+    ]
+
+    json_download = history_payload_bytes(
+        history, "gemini-2.5-flash", "sample.csv", clean
+    )
+    markdown_download = history_markdown_bytes(history, "sample.csv")
+
+    payload = json.loads(json_download)
+    assert payload["history"][0]["charts"][0]["image_base64"].startswith("iVBOR")
+    markdown = markdown_download.decode("utf-8-sig")
+    assert "상관관계 차트입니다." in markdown
+    assert '"chart_type": "correlation_heatmap"' in markdown
+
+
 def test_invalid_chart_is_replanned_once(monkeypatch, sample_frames) -> None:
     _, clean = sample_frames
     corrections = []

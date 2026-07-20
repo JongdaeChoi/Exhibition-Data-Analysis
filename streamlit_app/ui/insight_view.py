@@ -379,27 +379,35 @@ def render_insight() -> None:
         st.subheader("대화 내용 다운로드")
         json_col, markdown_col = st.columns(2)
         stem = (st.session_state.source_filename or "data").rsplit(".", 1)[0]
+        # Streamlit executes callable download data on a separate thread. Build
+        # both files while the script still has a valid session context instead
+        # of reading st.session_state from a deferred lambda.
+        download_history = list(st.session_state.insight_history)
+        json_download = history_payload_bytes(
+            download_history,
+            st.session_state.insight_model,
+            st.session_state.source_filename,
+            st.session_state.df_clean,
+            st.session_state.insight_provider,
+        )
+        markdown_download = history_markdown_bytes(
+            download_history, st.session_state.source_filename
+        )
         json_col.download_button(
             "대화·차트·코드 JSON 다운로드",
-            data=lambda: history_payload_bytes(
-                st.session_state.insight_history,
-                st.session_state.insight_model,
-                st.session_state.source_filename,
-                st.session_state.df_clean,
-                st.session_state.insight_provider,
-            ),
+            data=json_download,
             file_name=f"{stem}_insight_chat.json",
             mime="application/json",
+            key="download_insight_json",
             width="stretch",
             on_click="ignore",
         )
         markdown_col.download_button(
             "보고서 Markdown 다운로드",
-            data=lambda: history_markdown_bytes(
-                st.session_state.insight_history, st.session_state.source_filename
-            ),
+            data=markdown_download,
             file_name=f"{stem}_business_insight.md",
             mime="text/markdown",
+            key="download_insight_markdown",
             width="stretch",
             on_click="ignore",
         )
