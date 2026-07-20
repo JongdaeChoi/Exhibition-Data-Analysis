@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from insight.context import build_evidence_context
 from insight.models import InsightChartInput, InsightDecision, InsightMessage
 from insight.service import (
+    _decision_prompt,
     _gemini_json_schema,
     execute_request,
     history_markdown_bytes,
@@ -74,6 +75,14 @@ def test_gemini_schema_uses_supported_json_schema_subset() -> None:
     assert '"default"' not in encoded
     chart_schema = schema["$defs"]["InsightChartInput"]
     assert "aggregation" in chart_schema["required"]
+
+
+def test_decision_prompt_requires_selected_response_language() -> None:
+    prompt = _decision_prompt(
+        "Summarize the data", "evidence", [], response_language="English"
+    )
+    assert "[응답 언어]" in prompt
+    assert "English" in prompt
 
 
 def test_history_json_and_markdown_round_trip(sample_frames) -> None:

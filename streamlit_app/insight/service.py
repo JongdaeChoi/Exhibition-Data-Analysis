@@ -65,7 +65,7 @@ def rebuild_chart_record(
 INSIGHT_SYSTEM_PROMPT = """
 당신은 전시회 전문 데이터 분석 수석 컨설턴트입니다.
 제공된 데이터와 분석 컨텍스트를 근거로 정확하고 실행 가능한 결과를 제공하세요.
-항상 한국어로 답하세요.
+프롬프트의 [응답 언어]에 지정된 언어로 답하세요. 지정이 없으면 한국어로 답하세요.
 데이터에서 확인되지 않은 내용은 사실처럼 단정하지 말고 추정 또는 가정임을 명시하세요.
 
 [기본 응답 규칙]
@@ -128,7 +128,7 @@ INSIGHT_SYSTEM_PROMPT = """
 
 CHART_INSIGHT_SYSTEM_PROMPT = """
 당신은 전시회 전문 데이터 분석 수석 컨설턴트입니다.
-제공된 실제 차트 통계자료를 최우선 근거로 사용하여 한국어로 간결하게 답하세요.
+제공된 실제 차트 통계자료를 최우선 근거로 사용하고, 프롬프트의 [응답 언어]로 간결하게 답하세요.
 핵심 결과, 원인 해석, 업무적 의미, 권장 실행방안, 분석 한계를 구분하세요.
 검증되지 않은 원인은 반드시 '가능한 가설'이라고 표시하고, 자료에 없는 숫자를 만들지 마세요.
 """.strip()
@@ -256,6 +256,7 @@ def _decision_prompt(
     evidence_context: str,
     history: list[dict[str, Any]],
     correction: str | None = None,
+    response_language: str = "한국어",
 ) -> str:
     correction_text = (
         f"\n\n[이전 생성 결과의 검증 또는 실행 오류]\n{correction}\n요청을 바꾸지 말고 오류만 수정하세요."
@@ -270,6 +271,9 @@ def _decision_prompt(
 
 [현재 사용자 요청]
 {question}{correction_text}
+
+[응답 언어]
+{response_language}. answer와 사용자에게 표시되는 설명은 반드시 이 언어로 작성하세요.
 """.strip()
 
 
@@ -297,8 +301,11 @@ def plan_request(
     correction: str | None = None,
     provider: str = "Gemini",
     attachments: list[InsightAttachment] | None = None,
+    response_language: str = "한국어",
 ) -> InsightDecision:
-    prompt = _decision_prompt(question, evidence_context, history, correction)
+    prompt = _decision_prompt(
+        question, evidence_context, history, correction, response_language
+    )
     attachments = attachments or []
     try:
         if provider == "OpenAI":
@@ -356,6 +363,7 @@ def _chart_interpretation(
     history: list[dict[str, Any]],
     chart_source: dict[str, Any],
     attachments: list[InsightAttachment],
+    response_language: str = "한국어",
 ) -> str:
     prompt = f"""[사용자 요청]
 {question}
@@ -368,6 +376,9 @@ def _chart_interpretation(
 
 [기존 대화]
 {bounded_history_text(history)}
+
+[응답 언어]
+{response_language}. 반드시 이 언어로 답하세요.
 """
     return _generate_text(
         client, provider, model, CHART_INSIGHT_SYSTEM_PROMPT, prompt, attachments
@@ -386,6 +397,7 @@ def execute_request(
     provider: str = "Gemini",
     original_frame: pd.DataFrame | None = None,
     attachments: list[InsightAttachment] | None = None,
+    response_language: str = "한국어",
 ) -> InsightExecution:
     attachments = attachments or []
     client = _client(api_key) if provider == "Gemini" else _client(api_key, provider)
@@ -400,6 +412,7 @@ def execute_request(
             correction=correction,
             provider=provider,
             attachments=attachments,
+            response_language=response_language,
         )
         if decision.action in {"chart", "chart_with_insight"}:
             requested_aggregation = _explicit_chart_aggregation(question)
@@ -456,6 +469,7 @@ def execute_request(
                     history,
                     chart_source,
                     attachments,
+                    response_language,
                 )
             else:
                 answer = f"요청한 `{spec.title}` 차트를 생성했습니다."

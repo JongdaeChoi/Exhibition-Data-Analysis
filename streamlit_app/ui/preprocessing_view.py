@@ -5,7 +5,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from core.i18n import current_language, localized_columns, option_label, translate
+from core.i18n import current_language, localized_columns, localized_table, option_label, translate
 from data.preprocessing import (
     DATE_COMPONENT_LABELS,
     PreprocessingError,
@@ -227,7 +227,10 @@ def render_preprocessing() -> None:
 
     st.subheader("전처리 결과 요약")
     st.dataframe(
-        localized_columns(comparison_summary(st.session_state.df, st.session_state.df_clean)),
+        localized_table(
+            comparison_summary(st.session_state.df, st.session_state.df_clean),
+            value_columns=("항목",),
+        ),
         width="stretch",
         hide_index=True,
     )

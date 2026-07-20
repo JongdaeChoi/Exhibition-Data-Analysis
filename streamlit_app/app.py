@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.i18n import LANGUAGE_OPTIONS, install_streamlit_i18n, localized_columns
+from core.i18n import LANGUAGE_OPTIONS, install_streamlit_i18n, localized_columns, translate
 from core.session import has_dataset, initialize_session, store_dataset
 from data.loader import DataLoadError, download_google_drive_file, load_table
 from data.profiler import build_basic_profile
@@ -24,18 +24,20 @@ with language_control:
 # Streamlit removes widget state when a conditionally rendered stage disappears.
 # Reassign visualization keys so returning to the stage restores its controls.
 for state_key in list(st.session_state):
-    if state_key.startswith(("viz_", "visualization_")):
+    if state_key.startswith(("viz_", "visualization_")) and not state_key.startswith(
+        "viz_download_"
+    ):
         st.session_state[state_key] = st.session_state[state_key]
 
 
 def load_and_store(raw: bytes, filename: str, source: str) -> None:
     with st.status("데이터를 적재하고 있습니다...", expanded=True) as status:
-        st.write("파일 형식과 내용을 확인하고 있습니다.")
+        st.write(translate("파일 형식과 내용을 확인하고 있습니다."))
         dataset = load_table(raw, filename)
-        st.write("원본 데이터셋 `df`를 생성했습니다.")
-        st.write("분석용 데이터셋 `df_clean = df.copy()`를 생성했습니다.")
+        st.write(translate("원본 데이터셋 `df`를 생성했습니다."))
+        st.write(translate("분석용 데이터셋 `df_clean = df.copy()`를 생성했습니다."))
         store_dataset(dataset, source)
-        status.update(label="데이터 적재가 완료되었습니다.", state="complete")
+        status.update(label=translate("데이터 적재가 완료되었습니다."), state="complete")
 
 
 st.title("데이터 분석")

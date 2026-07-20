@@ -157,6 +157,11 @@ def test_language_selection_localizes_all_workflow_stages() -> None:
         "Download CSV",
         "Download Excel",
     }
+    summary = next(table.value for table in app.dataframe if "Item" in table.value.columns)
+    assert list(summary.columns) == [
+        "Item", "Before Preprocessing", "After Preprocessing", "Change"
+    ]
+    assert summary["Item"].tolist()[:2] == ["Rows", "Variables"]
 
     # Use a fresh AppTest tree for each conditionally-rendered stage. AppTest
     # serializes formatted option labels rather than their underlying values,
@@ -164,11 +169,19 @@ def test_language_selection_localizes_all_workflow_stages() -> None:
     app = _loaded_app()
     next(item for item in app.selectbox if item.label == "Language / 언어").set_value("English")
     app.run()
+    x_column = str(app.session_state.df_clean.columns[1])
+    app.session_state["visualization_result"] = build_visualization(
+        app.session_state.df_clean,
+        [ChartSpec(chart_type="bar", x=x_column, aggregation="count")],
+        FigureSpec(rows=1, columns=1),
+    )
     app.segmented_control[0].set_value("Visualization")
     app.run()
     assert "Data Visualization" in [item.value for item in app.header]
     assert "Layout Settings" in {item.label for item in app.expander}
     assert "Generate Visualization" in {item.label for item in app.button}
+    assert any("The statistical table contains" in item.value for item in app.markdown)
+    assert any("Value" in table.value.columns for table in app.dataframe)
 
     app = _loaded_app()
     next(item for item in app.selectbox if item.label == "Language / 언어").set_value("English")
@@ -177,3 +190,25 @@ def test_language_selection_localizes_all_workflow_stages() -> None:
     app.run()
     assert app.session_state.ui_language == "English"
     assert "Generate Business Insight" in {item.label for item in app.button}
+    insight_metrics = {item.label: str(item.value) for item in app.metric}
+    assert insight_metrics["Current Data"].endswith("rows")
+    assert insight_metrics["Preprocessing History"] == "0"
+
+
+def test_visualization_download_buttons_survive_rerun() -> None:
+    app = _loaded_app()
+    x_column = str(app.session_state.df_clean.columns[1])
+    app.session_state["visualization_result"] = build_visualization(
+        app.session_state.df_clean,
+        [ChartSpec(chart_type="bar", x=x_column, aggregation="count")],
+        FigureSpec(rows=1, columns=1),
+    )
+    app.segmented_control[0].set_value("시각화")
+    app.run()
+    assert not app.exception
+    assert {"PNG", "JPG", "PDF", "SVG", "Source JSON"}.issubset(
+        {item.label for item in app.download_button}
+    )
+
+    app.run()
+    assert not app.exception

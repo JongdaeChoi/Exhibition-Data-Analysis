@@ -367,6 +367,42 @@ EN: dict[str, str] = {
     "GPT-5.6 Luna · 빠른 응답, 대량 처리": "GPT-5.6 Luna · Fast responses and high-volume processing",
     "데이터 개수": "Data Count",
     "값": "Value",
+    "항목": "Item",
+    "전처리 이전": "Before Preprocessing",
+    "전처리 이후": "After Preprocessing",
+    "변화": "Change",
+    "행 수": "Rows",
+    "변수 수": "Variables",
+    "전체 데이터 셀": "Total Data Cells",
+    "전체 결측 개수": "Total Missing Values",
+    "중복 행 수": "Duplicate Rows",
+    "메모리 사용량(bytes)": "Memory Usage (bytes)",
+    "분석 타입": "Analysis Type",
+    "pandas 타입": "pandas Type",
+    "유효값": "Valid Values",
+    "날짜 변환 성공률(%)": "Date Conversion Success Rate (%)",
+    "수치형": "Numeric",
+    "범주형": "Categorical",
+    "날짜형": "Date",
+    "데이터 적재가 완료되었습니다.": "Data loading is complete.",
+    "데이터를 적재하고 있습니다...": "Loading data...",
+    "파일 형식과 내용을 확인하고 있습니다.": "Checking the file format and contents.",
+    "원본 데이터셋 `df`를 생성했습니다.": "Created the original dataset `df`.",
+    "분석용 데이터셋 `df_clean = df.copy()`를 생성했습니다.": "Created the analysis dataset `df_clean = df.copy()`.",
+    "시각화와 통계 source 저장을 완료했습니다.": "Saved the visualization and statistical source data.",
+    "API 인증 준비 완료": "API authentication is ready",
+    "화면 입력": "manual entry",
+    "현재 분석 컨텍스트 전체를 근거로 비즈니스 인사이트를 작성해 주세요.": "Create business insights based on the complete current analysis context.",
+    "모델이 요청 목적과 분석 근거를 확인하고 있습니다...": "model is reviewing the request intent and analytical evidence...",
+    "(선택)": "(optional)",
+    "##### X축 제어": "##### X-axis Control",
+    "##### Y축 제어": "##### Y-axis Control",
+    "X축 라벨과 눈금 스타일": "X-axis label and tick style",
+    "Y축 라벨과 눈금 스타일": "Y-axis label and tick style",
+    "범주축 설정": "Categorical Axis Range",
+    "API Key를 먼저 설정하세요. 입력한 질문은 실행되지 않았습니다.": "Set the API key first. The entered question was not submitted.",
+    "답변과 실행 결과를 전체 대화 이력에 저장했습니다.": "Saved the response and execution results to the full conversation history.",
+    "화면을 지웠습니다. 전체 대화 이력은 계속 저장됩니다.": "Cleared the current view. The full conversation history remains saved.",
 }
 
 
@@ -423,6 +459,11 @@ PHRASES: tuple[tuple[str, str], ...] = tuple(
             "행 중 처음": "rows; showing the first",
             "행": " rows",
             "파일을 적재했습니다.": "file loaded.",
+            "API 인증 준비 완료": "API authentication is ready",
+            "화면 입력": "manual entry",
+            "환경변수": "environment variable",
+            "모델이 요청 목적과 분석 근거를 확인하고 있습니다...": "model is reviewing the request intent and analytical evidence...",
+            "API Key (선택)": "API Key (optional)",
             "첨부": "Attachment",
             "기존 대화": "Existing conversation",
             "참고자료": "References",
@@ -478,6 +519,19 @@ def localized_columns(frame):
     if current_language() != "English":
         return frame
     return frame.rename(columns={column: EN.get(str(column), column) for column in frame.columns})
+
+
+def localized_table(frame, value_columns: tuple[str, ...] = ()):
+    """Localize application-generated headers and selected categorical cells."""
+    if current_language() != "English":
+        return frame
+    result = frame.copy()
+    for column in value_columns:
+        if column in result.columns:
+            result[column] = result[column].map(
+                lambda value: EN.get(str(value), value) if value is not None else value
+            )
+    return localized_columns(result)
 
 
 def _translated_call(

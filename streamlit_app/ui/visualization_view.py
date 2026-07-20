@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
+from core.i18n import current_language, localized_table, translate
 from visualization.models import AdvancedSettings, ChartSpec, DeepSettings, FigureSpec
 from visualization.service import (
     automatic_chart_title,
@@ -14,6 +15,7 @@ from visualization.service import (
     parse_text_request,
     source_payload,
     source_payload_bytes,
+    summarize_artifact,
 )
 from visualization.statistics import VisualizationDataError, semantic_type, variable_type_table
 
@@ -414,7 +416,7 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
     if chart_type not in {"pie", "correlation_heatmap"}:
         st.markdown("##### X축 및 Y축(Axis)")
         for axis_name, label_location_options in (("x", ["left", "center", "right"]), ("y", ["bottom", "center", "top"])):
-            st.caption(f"{axis_name.upper()}축 라벨과 눈금 스타일")
+            st.caption(translate(f"{axis_name.upper()}축 라벨과 눈금 스타일"))
             st.text_input(
                 f"{axis_name.upper()}축 라벨 입력값", key=f"viz_{index}_{axis_name}label",
                 help="선택된 변수명을 기본값으로 사용합니다.",
@@ -737,7 +739,7 @@ def _axis_controls(index: int, axis: str, kind: str, column: str | None, frame: 
         f"{axis}_date_format": "%Y-%m-%d",
     }
     with st.container(border=True):
-        st.markdown(f"##### {axis_name}축 제어")
+        st.markdown(translate(f"##### {axis_name}축 제어"))
         if kind == "unavailable":
             st.selectbox("축 범위", ["사용할 수 없음"], key=f"{prefix}_disabled", disabled=True)
             st.caption("이 차트 유형에서는 해당 축을 직접 제어할 수 없습니다.")
@@ -1158,16 +1160,23 @@ def _render_result(result) -> None:
     st.pyplot(result.figure, clear_figure=False, width="stretch")
     for index, artifact in enumerate(result.artifacts, 1):
         with st.expander(f"Chart {index} · 통계자료와 요약 인사이트", expanded=index == 1):
-            st.markdown(artifact.insight.replace("\n", "  \n"))
-            st.dataframe(artifact.statistics, width="stretch", hide_index=True)
+            insight = summarize_artifact(
+                artifact.statistics, artifact.spec, language=current_language()
+            )
+            st.markdown(insight.replace("\n", "  \n"))
+            st.dataframe(
+                localized_table(artifact.statistics, value_columns=("분석 타입",)),
+                width="stretch",
+                hide_index=True,
+            )
             mapping = artifact.statistics.attrs.get("category_mapping")
             if mapping is not None:
                 st.caption("범주형 변수의 수치 인덱스 매핑")
-                st.dataframe(mapping, width="stretch", hide_index=True)
+                st.dataframe(localized_table(mapping), width="stretch", hide_index=True)
             mappings = artifact.statistics.attrs.get("category_mappings", {})
             for variable, variable_mapping in mappings.items():
                 st.caption(f"{variable} 범주형 변수의 수치 인덱스 매핑")
-                st.dataframe(variable_mapping, width="stretch", hide_index=True)
+                st.dataframe(localized_table(variable_mapping), width="stretch", hide_index=True)
     st.markdown("### 결과 다운로드")
     formats = result.figure_spec.output_formats
     cols = st.columns(max(len(formats) + 1, 1))
@@ -1217,7 +1226,11 @@ def render_visualization(*, preserve_existing_result: bool = False) -> None:
     frame = st.session_state.df_clean
     st.caption("시각화와 통계자료는 현재 전처리 데이터 `df_clean`을 기준으로 생성됩니다.")
     with st.expander("변수별 데이터 타입", expanded=False):
-        st.dataframe(variable_type_table(frame), width="stretch", hide_index=True)
+        st.dataframe(
+            localized_table(variable_type_table(frame), value_columns=("분석 타입",)),
+            width="stretch",
+            hide_index=True,
+        )
     method = st.radio(
         "시각화 요청방법",
         ["구조화 메뉴", "텍스트 요청"],
@@ -1235,7 +1248,11 @@ def render_visualization(*, preserve_existing_result: bool = False) -> None:
         key="visualization_subplot_columns",
     ))
     chart_count = rows * columns
-    st.caption(f"{rows} × {columns} 구성 · 차트 설정 {chart_count}개")
+    st.caption(
+        f"{rows} × {columns} layout · {chart_count} chart setting(s)"
+        if current_language() == "English"
+        else f"{rows} × {columns} 구성 · 차트 설정 {chart_count}개"
+    )
     figure_spec = _figure_controls(rows, columns)
     try:
         if method == "텍스트 요청":

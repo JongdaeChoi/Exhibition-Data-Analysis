@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 
+import pandas as pd
 import streamlit as st
 
+from core.i18n import current_language, localized_table, translate
 from insight.context import build_evidence_context
 from insight.models import (
     MODEL_OPTIONS,
@@ -174,7 +176,12 @@ def _render_history(history: list[dict], visible_from: int = 0) -> None:
                             _reexecute_history_chart(
                                 message_index, chart_index, edited_spec
                             )
-                        st.dataframe(item.get("statistics", []), width="stretch", hide_index=True)
+                        statistics = item.get("statistics", [])
+                        if statistics:
+                            statistics = localized_table(
+                                pd.DataFrame(statistics), value_columns=("분석 타입",)
+                            )
+                        st.dataframe(statistics, width="stretch", hide_index=True)
 
 
 def _restore_uploaded_history(uploaded) -> None:
@@ -290,11 +297,24 @@ def render_insight() -> None:
         for item in st.session_state.get("insight_references", [])
     ]
     evidence_columns = st.columns(5)
-    evidence_columns[0].metric("현재 데이터", f"{len(frame):,}행")
-    evidence_columns[1].metric("변수", f"{frame.shape[1]:,}개")
-    evidence_columns[2].metric("전처리 이력", f"{len(st.session_state.get('preprocessing_history', [])):,}건")
-    evidence_columns[3].metric("시각화 Source", f"{len(st.session_state.get('visualization_sources', [])):,}건")
-    evidence_columns[4].metric("참고자료", f"{len(references):,}개")
+    english = current_language() == "English"
+    evidence_columns[0].metric(
+        "현재 데이터", f"{len(frame):,} rows" if english else f"{len(frame):,}행"
+    )
+    evidence_columns[1].metric(
+        "변수", f"{frame.shape[1]:,}" if english else f"{frame.shape[1]:,}개"
+    )
+    history_count = len(st.session_state.get("preprocessing_history", []))
+    source_count = len(st.session_state.get("visualization_sources", []))
+    evidence_columns[2].metric(
+        "전처리 이력", f"{history_count:,}" if english else f"{history_count:,}건"
+    )
+    evidence_columns[3].metric(
+        "시각화 Source", f"{source_count:,}" if english else f"{source_count:,}건"
+    )
+    evidence_columns[4].metric(
+        "참고자료", f"{len(references):,}" if english else f"{len(references):,}개"
+    )
 
     notice = st.session_state.pop("insight_notice", None)
     if notice:
@@ -311,7 +331,7 @@ def render_insight() -> None:
         key="insight_question",
     )
     question = (
-        "현재 분석 컨텍스트 전체를 근거로 비즈니스 인사이트를 작성해 주세요."
+        translate("현재 분석 컨텍스트 전체를 근거로 비즈니스 인사이트를 작성해 주세요.")
         if insight_requested
         else typed_question
     )
@@ -349,6 +369,7 @@ def render_insight() -> None:
                     evidence_context=evidence,
                     history=previous_history,
                     attachments=references,
+                    response_language=current_language(),
                 )
             st.session_state.insight_history.append(execution.message.model_dump(mode="json"))
             st.session_state.insight_pending_attachment_ids = []
