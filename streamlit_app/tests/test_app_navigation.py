@@ -212,3 +212,82 @@ def test_visualization_download_buttons_survive_rerun() -> None:
 
     app.run()
     assert not app.exception
+
+
+def test_english_dynamic_preprocessing_and_axis_labels() -> None:
+    app = _loaded_app()
+    next(item for item in app.selectbox if item.label == "Language / 언어").set_value("English")
+    app.run()
+    app.session_state["preprocessing_section"] = "특정값 변경"
+    app.segmented_control[0].set_value("Preprocessing")
+    app.run()
+
+    replacement_button = next(
+        item for item in app.button if item.label.startswith("Apply Entered Replacements")
+    )
+    assert replacement_button.label == "Apply Entered Replacements (0 items)"
+    unique_caption = next(item.value for item in app.caption if "Unique Value" in item.value)
+    assert "descending" in unique_caption
+    assert "Rows without a replacement are unchanged" in unique_caption
+    assert not any("\uac00" <= character <= "\ud7a3" for character in unique_caption)
+
+    axis_app = AppTest.from_string(
+        """
+import streamlit as st
+from core.i18n import install_streamlit_i18n
+
+st.session_state["ui_language"] = "English"
+install_streamlit_i18n()
+st.number_input("최소값", value=0.0)
+st.number_input("최대값", value=1.0)
+""",
+        default_timeout=30,
+    ).run()
+
+    numeric_labels = {item.label for item in axis_app.number_input}
+    assert {"Minimum", "Maximum"}.issubset(numeric_labels)
+    assert not axis_app.exception
+
+
+def test_english_visualization_controls_have_no_korean_ui_labels() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": ["2025-01-01", "2025-02-01"],
+            "category": ["A", "B"],
+            "value": [1, 2],
+        }
+    )
+    element_groups = (
+        "caption", "markdown", "info", "warning", "success", "error",
+        "button", "text_input", "checkbox", "number_input", "slider",
+        "expander", "toggle", "color_picker", "date_input", "selectbox",
+        "multiselect", "radio",
+    )
+
+    for chart_type in ("bar", "line", "pie", "histogram", "scatter_plot", "heatmap"):
+        app = AppTest.from_file(str(APP_PATH), default_timeout=30)
+        app.session_state["df"] = frame
+        app.session_state["df_clean"] = frame.copy(deep=True)
+        app.session_state["source_filename"] = "sample.csv"
+        app.session_state["ui_language"] = "English"
+        app.session_state["analysis_stage"] = "시각화"
+        app.session_state["viz_0_type"] = chart_type
+        app.run()
+
+        assert not app.exception
+        for group_name in element_groups:
+            for element in getattr(app, group_name):
+                fields = ("label",) if group_name in {"selectbox", "multiselect", "radio"} else ("label", "value")
+                for field_name in fields:
+                    value = getattr(element, field_name, None)
+                    if isinstance(value, str):
+                        assert not any("가" <= character <= "힣" for character in value), (
+                            chart_type, group_name, field_name, value
+                        )
+                    if group_name in {"selectbox", "multiselect", "radio"}:
+                        for option in getattr(element, "options", ()):
+                            if option == "한국어":
+                                continue
+                            assert not any("가" <= character <= "힣" for character in option), (
+                            chart_type, group_name, "option", option
+                        )

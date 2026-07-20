@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,7 +66,8 @@ def rebuild_chart_record(
 INSIGHT_SYSTEM_PROMPT = """
 당신은 전시회 전문 데이터 분석 수석 컨설턴트입니다.
 제공된 데이터와 분석 컨텍스트를 근거로 정확하고 실행 가능한 결과를 제공하세요.
-프롬프트의 [응답 언어]에 지정된 언어로 답하세요. 지정이 없으면 한국어로 답하세요.
+현재 사용자 요청에 답변·번역·해석 언어가 명시되어 있으면 그 언어를 최우선으로 따르세요.
+사용자가 언어를 명시하지 않은 경우에만 프롬프트의 [기본 응답 언어]를 따르세요.
 데이터에서 확인되지 않은 내용은 사실처럼 단정하지 말고 추정 또는 가정임을 명시하세요.
 
 [기본 응답 규칙]
@@ -118,6 +120,7 @@ INSIGHT_SYSTEM_PROMPT = """
 - 데이터로 확인되지 않은 원인은 추정 또는 가정이라고 명시하세요.
 
 [최종 응답 점검]
+- 현재 사용자 요청에 명시된 답변 언어를 따랐는지 확인하세요.
 - 요청하지 않은 내용, 실제 계산하지 않은 숫자 또는 불필요한 코드를 포함하지 않았는지 확인하세요.
 - data 요청에서만 python_code를 작성하고 df를 수정하지 않았는지 확인하세요.
 - 사용자가 변경을 요청한 경우에만 modifies_df_clean을 true로 설정했는지 확인하세요.
@@ -128,7 +131,9 @@ INSIGHT_SYSTEM_PROMPT = """
 
 CHART_INSIGHT_SYSTEM_PROMPT = """
 당신은 전시회 전문 데이터 분석 수석 컨설턴트입니다.
-제공된 실제 차트 통계자료를 최우선 근거로 사용하고, 프롬프트의 [응답 언어]로 간결하게 답하세요.
+제공된 실제 차트 통계자료를 최우선 근거로 사용하세요.
+현재 사용자 요청에 답변·번역·해석 언어가 명시되어 있으면 그 언어를 최우선으로 따르고,
+언어 지시가 없을 때만 프롬프트의 [기본 응답 언어]로 간결하게 답하세요.
 핵심 결과, 원인 해석, 업무적 의미, 권장 실행방안, 분석 한계를 구분하세요.
 검증되지 않은 원인은 반드시 '가능한 가설'이라고 표시하고, 자료에 없는 숫자를 만들지 마세요.
 """.strip()
@@ -272,9 +277,34 @@ def _decision_prompt(
 [현재 사용자 요청]
 {question}{correction_text}
 
-[응답 언어]
-{response_language}. answer와 사용자에게 표시되는 설명은 반드시 이 언어로 작성하세요.
+[응답 언어 우선순위]
+1. 현재 사용자 요청에 답변, 번역 또는 해석 언어가 명시되어 있으면 그 언어로 작성하세요.
+2. 언어가 명시되지 않은 경우에만 아래 기본 응답 언어를 사용하세요.
+
+[기본 응답 언어]
+{response_language}
 """.strip()
+
+
+def _resolve_response_language(question: str, default_language: str) -> str:
+    """Resolve explicit Korean/English instructions; the model handles other named languages."""
+    normalized = " ".join((question or "").casefold().split())
+    korean_patterns = (
+        r"(?:한국어|한글)로(?:\s+(?:답|응답|설명|해석|번역|작성))?",
+        r"(?:answer|respond|write|explain|interpret|translate)\s+(?:it\s+)?(?:in|into|to)\s+korean\b",
+        r"(?:in|into)\s+korean\b",
+    )
+    english_patterns = (
+        r"영어로(?:\s+(?:답|응답|설명|해석|번역|작성))?",
+        r"(?:answer|respond|write|explain|interpret|translate)\s+(?:it\s+)?(?:in|into|to)\s+english\b",
+        r"(?:in|into)\s+english\b",
+    )
+    matches: list[tuple[int, str]] = []
+    for language, patterns in (("한국어", korean_patterns), ("English", english_patterns)):
+        for pattern in patterns:
+            for match in re.finditer(pattern, normalized):
+                matches.append((match.start(), language))
+    return max(matches, default=(-1, default_language))[1]
 
 
 def _explicit_chart_aggregation(question: str):
@@ -377,8 +407,12 @@ def _chart_interpretation(
 [기존 대화]
 {bounded_history_text(history)}
 
-[응답 언어]
-{response_language}. 반드시 이 언어로 답하세요.
+[응답 언어 우선순위]
+1. 현재 사용자 요청에 답변, 번역 또는 해석 언어가 명시되어 있으면 그 언어로 작성하세요.
+2. 언어가 명시되지 않은 경우에만 아래 기본 응답 언어를 사용하세요.
+
+[기본 응답 언어]
+{response_language}
 """
     return _generate_text(
         client, provider, model, CHART_INSIGHT_SYSTEM_PROMPT, prompt, attachments
@@ -400,6 +434,7 @@ def execute_request(
     response_language: str = "한국어",
 ) -> InsightExecution:
     attachments = attachments or []
+    response_language = _resolve_response_language(question, response_language)
     client = _client(api_key) if provider == "Gemini" else _client(api_key, provider)
     correction = None
     for attempt in range(2):

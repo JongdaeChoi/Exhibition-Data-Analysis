@@ -292,10 +292,12 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
         label_signature = (x, selected_y, aggregation, x_y_swap)
         if st.session_state.get(label_signature_key) != label_signature:
             st.session_state[f"{prefix}_xlabel"] = (
-                selected_y or "값" if x_y_swap else x
+                selected_y or translate("값") if x_y_swap else x
             )
             st.session_state[f"{prefix}_ylabel"] = (
-                x if x_y_swap else (selected_y or ("비율(%)" if aggregation == "ratio" else "값"))
+                x if x_y_swap else (
+                    selected_y or translate("비율(%)" if aggregation == "ratio" else "값")
+                )
             )
             st.session_state[label_signature_key] = label_signature
         x_label = st.session_state[f"{prefix}_xlabel"]

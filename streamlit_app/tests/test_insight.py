@@ -13,6 +13,7 @@ from insight.models import InsightChartInput, InsightDecision, InsightMessage
 from insight.service import (
     _decision_prompt,
     _gemini_json_schema,
+    _resolve_response_language,
     execute_request,
     history_markdown_bytes,
     history_payload_bytes,
@@ -81,8 +82,26 @@ def test_decision_prompt_requires_selected_response_language() -> None:
     prompt = _decision_prompt(
         "Summarize the data", "evidence", [], response_language="English"
     )
-    assert "[응답 언어]" in prompt
+    assert "[응답 언어 우선순위]" in prompt
+    assert "현재 사용자 요청" in prompt
+    assert "[기본 응답 언어]" in prompt
     assert "English" in prompt
+
+
+@pytest.mark.parametrize(
+    ("question", "default_language", "expected"),
+    [
+        ("Explain the previous answer in English", "한국어", "English"),
+        ("이전 답변을 영어로 해석해 주세요", "한국어", "English"),
+        ("Please translate it into Korean", "English", "한국어"),
+        ("위 답변을 한국어로 작성해 주세요", "English", "한국어"),
+        ("Summarize the previous answer", "English", "English"),
+    ],
+)
+def test_explicit_chat_language_overrides_ui_default(
+    question: str, default_language: str, expected: str
+) -> None:
+    assert _resolve_response_language(question, default_language) == expected
 
 
 def test_history_json_and_markdown_round_trip(sample_frames) -> None:
