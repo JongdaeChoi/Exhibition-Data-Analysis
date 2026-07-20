@@ -21,7 +21,7 @@ from insight.service import (
     rebuild_chart_record,
     restore_history,
 )
-from ui.insight_view import _configured_api_key
+from ui.insight_view import _apply_restored_model_before_widgets, _configured_api_key
 
 
 @pytest.fixture
@@ -65,6 +65,29 @@ def test_insight_decision_requires_text_or_valid_chart() -> None:
     assert spec.x == "국가"
     assert spec.value_column == "매출"
     assert spec.title == "국가 · 매출"
+
+
+def test_insight_chart_supports_requested_category_axis_order() -> None:
+    frame = pd.DataFrame(
+        {
+            "만족도": [5] * 7 + [4] * 5 + [1] * 4 + [3] * 2 + [2],
+            "성과": [1, 2, 1, 2, 3, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 1],
+        }
+    )
+    chart_input = InsightChartInput(
+        chart_type="heatmap",
+        x="만족도",
+        y="성과",
+        aggregation="count",
+        x_category_order=["1", "2", "3", "4", "5"],
+    )
+
+    spec = chart_input.to_chart_spec()
+    assert spec.category_orders == {"만족도": ["1", "2", "3", "4", "5"]}
+    _, source = rebuild_chart_record(frame, spec, "sample.csv")
+    statistics = source["charts"][0]["statistics"]
+    displayed_order = list(dict.fromkeys(str(row["만족도"]) for row in statistics))
+    assert displayed_order == ["1", "2", "3", "4", "5"]
 
 
 def test_gemini_schema_uses_supported_json_schema_subset() -> None:
@@ -118,6 +141,23 @@ def test_history_json_and_markdown_round_trip(sample_frames) -> None:
     assert "# 비즈니스 인사이트" in markdown
     assert "핵심 요약입니다." in markdown
     assert json.loads(payload)["data_signature"]["shape"] == [3, 3]
+
+
+def test_restored_model_is_applied_before_widget_creation(monkeypatch) -> None:
+    state = {
+        "insight_provider": "OpenAI",
+        "insight_model": "gpt-5.6-sol",
+        "insight_restored_provider": "Gemini",
+        "insight_restored_model": "gemini-2.5-pro",
+    }
+    monkeypatch.setattr("ui.insight_view.st", types.SimpleNamespace(session_state=state))
+
+    _apply_restored_model_before_widgets()
+
+    assert state["insight_provider"] == "Gemini"
+    assert state["insight_model"] == "gemini-2.5-pro"
+    assert "insight_restored_provider" not in state
+    assert "insight_restored_model" not in state
 
 
 def test_chart_request_uses_existing_visualization_pipeline(monkeypatch, sample_frames) -> None:

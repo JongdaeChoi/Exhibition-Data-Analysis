@@ -25,8 +25,8 @@ SESSION_DEFAULTS = {
     "visualization_notice": None,
     "insight_history": [],
     "insight_api_keys": {},
-    "insight_provider": "Gemini",
-    "insight_model": "gemini-2.5-flash",
+    "insight_provider": "OpenAI",
+    "insight_model": "gpt-5.6-sol",
     "insight_references": [],
     "insight_pending_attachment_ids": [],
     "insight_visible_from": 0,
@@ -59,8 +59,8 @@ def store_dataset(dataset: LoadedDataset, source: str) -> None:
     st.session_state.visualization_sources = []
     st.session_state.visualization_notice = None
     st.session_state.insight_history = []
-    st.session_state.insight_provider = "Gemini"
-    st.session_state.insight_model = "gemini-2.5-flash"
+    st.session_state.insight_provider = "OpenAI"
+    st.session_state.insight_model = "gpt-5.6-sol"
     st.session_state.insight_references = []
     st.session_state.insight_pending_attachment_ids = []
     st.session_state.insight_visible_from = 0

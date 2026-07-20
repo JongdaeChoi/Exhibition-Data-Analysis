@@ -81,10 +81,10 @@ def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
 
     app.segmented_control[0].set_value("인사이트")
     app.run()
-    api_input = next(item for item in app.text_input if item.label.startswith("Gemini API Key"))
-    api_input.input("AIzaTestSessionOnly")
+    api_input = next(item for item in app.text_input if item.label.startswith("OpenAI API Key"))
+    api_input.input("sk-test-session-only")
     app.run()
-    assert app.session_state.insight_api_keys["Gemini"] == "AIzaTestSessionOnly"
+    assert app.session_state.insight_api_keys["OpenAI"] == "sk-test-session-only"
     assert any(button.label == "수정한 Pydantic 설정으로 차트 재실행" for button in app.button)
     editor = next(item for item in app.text_area if item.label == "ChartSpec JSON 직접 수정")
     edited_spec = json.loads(editor.value)
@@ -103,8 +103,8 @@ def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
     app.run()
     app.segmented_control[0].set_value("인사이트")
     app.run()
-    api_input = next(item for item in app.text_input if item.label.startswith("Gemini API Key"))
-    assert api_input.value == "AIzaTestSessionOnly"
+    api_input = next(item for item in app.text_input if item.label.startswith("OpenAI API Key"))
+    assert api_input.value == "sk-test-session-only"
 
     visualization_result = build_visualization(
         app.session_state.df_clean,

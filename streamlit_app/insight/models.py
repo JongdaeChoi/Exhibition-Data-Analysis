@@ -9,15 +9,15 @@ from visualization.service import automatic_chart_title
 
 
 PROVIDER_MODELS = {
-    "Gemini": (
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-3.1-pro-preview",
-    ),
     "OpenAI": (
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
+    ),
+    "Gemini": (
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-3.1-pro-preview",
     ),
 }
 MODEL_LABELS = {
@@ -68,6 +68,14 @@ class InsightChartInput(BaseModel):
     ratio_basis: Literal["total", "within_x", "within_y"] = "total"
     variables: list[str] = Field(default_factory=list)
     comparison_chart: Literal["bar", "line"] = "bar"
+    x_category_order: list[str] = Field(
+        default_factory=list,
+        description="X축 범주의 사용자 지정 표시 순서. 실제 표시값을 문자열로 입력",
+    )
+    y_category_order: list[str] = Field(
+        default_factory=list,
+        description="Y축 범주의 사용자 지정 표시 순서. 실제 표시값을 문자열로 입력",
+    )
     title: str = ""
     show_values: bool = True
 
@@ -75,10 +83,17 @@ class InsightChartInput(BaseModel):
         title = self.title.strip() or automatic_chart_title(
             self.x, self.y, self.group, self.value_column, *self.variables
         )
+        values = self.model_dump(exclude={"x_category_order", "y_category_order"})
+        category_orders = {}
+        if self.x and self.x_category_order:
+            category_orders[self.x] = self.x_category_order
+        if self.y and self.y_category_order:
+            category_orders[self.y] = self.y_category_order
         return ChartSpec.model_validate(
             {
-                **self.model_dump(),
+                **values,
                 "title": title,
+                "category_orders": category_orders,
                 "advanced": {"top_n": 20},
             }
         )
@@ -130,7 +145,7 @@ class InsightHistoryPayload(BaseModel):
 
     schema_version: int = 2
     saved_at: str | None = None
-    provider: Literal["Gemini", "OpenAI"] = "Gemini"
+    provider: Literal["Gemini", "OpenAI"] = "OpenAI"
     model: str = MODEL_OPTIONS[0]
     source_filename: str | None = None
     data_signature: dict[str, Any] = Field(default_factory=dict)

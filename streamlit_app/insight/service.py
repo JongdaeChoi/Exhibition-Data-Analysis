@@ -99,11 +99,15 @@ INSIGHT_SYSTEM_PROMPT = """
 
 [차트 요청 규칙]
 - 차트 요청에는 Python, Matplotlib 또는 Seaborn 코드를 작성하지 말고 지원되는 chart_spec만 생성하세요.
+- 기존 대화의 차트에 대한 축 순서, 차트 유형, 집계 또는 표시 변경 요청도 chart로 분류하고 기존 ChartSpec을 요청대로 갱신하세요.
 - 지원 차트: bar, line, multi_variable, pie, histogram, scatter_plot, grouped_bar, stacked_bar, scatter_bubble, heatmap, correlation_heatmap.
 - 지원 집계: count, valid_count, sum, mean, ratio.
 - 실제 컬럼명만 사용하세요. sum과 mean에는 수치형 value_column을 지정하세요.
 - grouped_bar, stacked_bar, scatter_bubble, heatmap은 x와 y가 필요합니다.
 - correlation_heatmap과 multi_variable은 variables에 두 개 이상의 컬럼이 필요합니다.
+- X축 범주 표시 순서를 요청하면 x_category_order에 실제 범주값을 문자열 목록으로 입력하세요. 예: ["1", "2", "3", "4", "5"].
+- Y축 범주 표시 순서를 요청하면 y_category_order에 실제 범주값을 문자열 목록으로 입력하세요.
+- 범주 순서 기능을 지원하지 않는다고 답하지 말고, 기존 차트의 나머지 설정을 유지하면서 요청된 축 순서만 반영하세요.
 - 지원되지 않는 차트·집계·변수 조합을 다른 기능으로 바꾸지 마세요.
 - 차트 계산과 렌더링은 프로그램의 build_statistics 및 render_chart 함수가 수행합니다.
 

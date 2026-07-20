@@ -188,14 +188,23 @@ def _restore_uploaded_history(uploaded) -> None:
     history, saved_model = restore_history(uploaded.getvalue(), uploaded.name)
     st.session_state.insight_history = history
     if saved_model in MODEL_OPTIONS:
-        st.session_state.insight_model = saved_model
-        st.session_state.insight_provider = next(
+        st.session_state.insight_restored_model = saved_model
+        st.session_state.insight_restored_provider = next(
             provider for provider, models in PROVIDER_MODELS.items() if saved_model in models
         )
     st.session_state.insight_visible_from = 0
     st.session_state.insight_notice = f"기존 대화 {len(history):,}개 메시지를 등록했습니다."
     st.session_state.insight_error = None
     st.rerun()
+
+
+def _apply_restored_model_before_widgets() -> None:
+    """Apply restored widget values before their widgets are instantiated."""
+    saved_model = st.session_state.pop("insight_restored_model", None)
+    saved_provider = st.session_state.pop("insight_restored_provider", None)
+    if saved_model in MODEL_OPTIONS and saved_provider in PROVIDER_MODELS:
+        st.session_state["insight_provider"] = saved_provider
+        st.session_state["insight_model"] = saved_model
 
 
 def _register_references(uploaded_files) -> None:
@@ -213,6 +222,7 @@ def _register_references(uploaded_files) -> None:
 
 
 def render_insight() -> None:
+    _apply_restored_model_before_widgets()
     st.header("Business Insight")
     st.caption(
         "현재 df_clean, 전처리 이력, 기술통계, 저장된 시각화 자료, 첨부자료와 대화를 근거로 답합니다."

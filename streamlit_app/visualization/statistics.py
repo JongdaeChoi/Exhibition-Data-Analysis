@@ -171,6 +171,11 @@ def _sort_and_limit(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
             other = remaining.groupby(group_columns, dropna=False, observed=False, sort=False)["값"].sum().reset_index()
             selected = pd.concat([selected, other], ignore_index=True)
         result = selected
+    # Ranking selects the rows, but an explicit category order controls their
+    # final display order. This prevents the default Top-N value ranking from
+    # overriding a user-requested axis sequence.
+    if spec.category_orders:
+        result = _apply_category_orders(result, spec)
     return result.reset_index(drop=True)
 
 

@@ -14,6 +14,7 @@ def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def test_data_decision_requires_code_and_supports_provider_models() -> None:
+    assert list(PROVIDER_MODELS) == ["OpenAI", "Gemini"]
     with pytest.raises(ValueError):
         InsightDecision(action="data")
     decision = InsightDecision(
