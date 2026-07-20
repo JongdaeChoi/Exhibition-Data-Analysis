@@ -137,3 +137,43 @@ def test_local_upload_opens_fast_basic_stage() -> None:
     assert len(app.session_state.df) == 2
     assert app.session_state.df is not app.session_state.df_clean
     assert "sample.csv 파일을 적재했습니다." in [message.value for message in app.success]
+
+
+def test_language_selection_localizes_all_workflow_stages() -> None:
+    app = _loaded_app()
+    language = next(item for item in app.selectbox if item.label == "Language / 언어")
+    language.set_value("English")
+    app.run()
+
+    assert app.session_state.ui_language == "English"
+    assert "Data Analysis" in [item.value for item in app.title]
+    assert "2. Data Overview" in {item.label for item in app.expander}
+    assert app.segmented_control[0].label == "Stage to Display"
+
+    app.segmented_control[0].set_value("Preprocessing")
+    app.run()
+    assert "Preprocessing" in [item.value for item in app.header]
+    assert {button.label for button in app.download_button} == {
+        "Download CSV",
+        "Download Excel",
+    }
+
+    # Use a fresh AppTest tree for each conditionally-rendered stage. AppTest
+    # serializes formatted option labels rather than their underlying values,
+    # unlike a browser session, when a widget disappears between runs.
+    app = _loaded_app()
+    next(item for item in app.selectbox if item.label == "Language / 언어").set_value("English")
+    app.run()
+    app.segmented_control[0].set_value("Visualization")
+    app.run()
+    assert "Data Visualization" in [item.value for item in app.header]
+    assert "Layout Settings" in {item.label for item in app.expander}
+    assert "Generate Visualization" in {item.label for item in app.button}
+
+    app = _loaded_app()
+    next(item for item in app.selectbox if item.label == "Language / 언어").set_value("English")
+    app.run()
+    app.segmented_control[0].set_value("Insight")
+    app.run()
+    assert app.session_state.ui_language == "English"
+    assert "Generate Business Insight" in {item.label for item in app.button}

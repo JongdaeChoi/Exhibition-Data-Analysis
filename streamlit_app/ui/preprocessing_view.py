@@ -5,6 +5,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
+from core.i18n import current_language, localized_columns, option_label, translate
 from data.preprocessing import (
     DATE_COMPONENT_LABELS,
     PreprocessingError,
@@ -50,7 +51,7 @@ def _render_missing(frame: pd.DataFrame) -> None:
     st.markdown("#### 결측값 일괄 처리")
     st.caption("처리할 컬럼의 처리방법을 선택하고, ‘특정값’인 경우 같은 행의 처리값을 입력하세요.")
     table = missing_value_summary(frame)
-    table["처리방법"] = "처리 안 함"
+    table["처리방법"] = option_label("처리 안 함")
     table["처리값"] = ""
     revision = st.session_state.get("preprocessing_revision", 0)
     edited = st.data_editor(
@@ -59,14 +60,25 @@ def _render_missing(frame: pd.DataFrame) -> None:
         hide_index=True,
         disabled=["변수명", "결측 개수", "결측률(%)"],
         column_config={
-            "변수명": st.column_config.TextColumn("변수명"),
-            "결측 개수": st.column_config.NumberColumn("결측 개수", format="%d"),
-            "결측률(%)": st.column_config.NumberColumn("결측률(%)", format="%.2f%%"),
-            "처리방법": st.column_config.SelectboxColumn("처리방법", options=MISSING_METHODS, required=True),
-            "처리값": st.column_config.TextColumn("처리값", help="처리방법이 ‘특정값’일 때 입력합니다."),
+            "변수명": st.column_config.TextColumn(translate("변수명")),
+            "결측 개수": st.column_config.NumberColumn(translate("결측 개수"), format="%d"),
+            "결측률(%)": st.column_config.NumberColumn(translate("결측률(%)"), format="%.2f%%"),
+            "처리방법": st.column_config.SelectboxColumn(
+                translate("처리방법"),
+                options=[option_label(item) for item in MISSING_METHODS],
+                required=True,
+            ),
+            "처리값": st.column_config.TextColumn(
+                translate("처리값"), help=translate("처리방법이 ‘특정값’일 때 입력합니다.")
+            ),
         },
         key=f"missing_editor_{revision}",
     )
+    if current_language() == "English":
+        method_lookup = {option_label(item): item for item in MISSING_METHODS}
+        edited["처리방법"] = edited["처리방법"].map(
+            lambda value: method_lookup.get(value, value)
+        )
     operations = missing_operations_from_editor(edited)
     if st.button(
         f"선택한 결측값 처리 ({len(operations):,}개 컬럼)",
@@ -108,11 +120,13 @@ def _render_replace(frame: pd.DataFrame) -> None:
         column_config={
             "표시값": st.column_config.TextColumn("Unique Value"),
             "데이터 타입": st.column_config.TextColumn(
-                "원본 데이터 타입",
-                help="같게 표시되는 값에 여러 타입이 있으면 함께 표시됩니다.",
+                translate("원본 데이터 타입"),
+                help=translate("같게 표시되는 값에 여러 타입이 있으면 함께 표시됩니다."),
             ),
-            "개수": st.column_config.NumberColumn("개수", format="%d"),
-            "처리값": st.column_config.TextColumn("처리값", help="이 값으로 변경할 행에만 입력하세요."),
+            "개수": st.column_config.NumberColumn(translate("개수"), format="%d"),
+            "처리값": st.column_config.TextColumn(
+                translate("처리값"), help=translate("이 값으로 변경할 행에만 입력하세요.")
+            ),
         },
         key=f"replace_editor_{column}_{page}_{revision}",
     )
@@ -137,7 +151,7 @@ def _render_replace(frame: pd.DataFrame) -> None:
 def _render_date(frame: pd.DataFrame) -> None:
     st.markdown("#### 날짜 파생변수 생성")
     candidates = date_column_candidates(frame)
-    st.dataframe(candidates, width="stretch", hide_index=True)
+    st.dataframe(localized_columns(candidates), width="stretch", hide_index=True)
     if candidates.empty:
         st.info("값의 80% 이상을 날짜로 변환할 수 있는 변수가 없습니다.")
         return
@@ -213,7 +227,7 @@ def render_preprocessing() -> None:
 
     st.subheader("전처리 결과 요약")
     st.dataframe(
-        comparison_summary(st.session_state.df, st.session_state.df_clean),
+        localized_columns(comparison_summary(st.session_state.df, st.session_state.df_clean)),
         width="stretch",
         hide_index=True,
     )

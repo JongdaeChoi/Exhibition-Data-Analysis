@@ -2,13 +2,24 @@ from __future__ import annotations
 
 import streamlit as st
 
+from core.i18n import LANGUAGE_OPTIONS, install_streamlit_i18n, localized_columns
 from core.session import has_dataset, initialize_session, store_dataset
 from data.loader import DataLoadError, download_google_drive_file, load_table
 from data.profiler import build_basic_profile
 
 
-st.set_page_config(page_title="데이터 분석", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Data Analysis | 데이터 분석", page_icon="📊", layout="wide")
 initialize_session()
+install_streamlit_i18n()
+
+language_space, language_control = st.columns([8, 2])
+with language_control:
+    st.selectbox(
+        "Language / 언어",
+        LANGUAGE_OPTIONS,
+        key="ui_language",
+        help="화면에 표시할 언어를 선택합니다. / Select the interface language.",
+    )
 
 # Streamlit removes widget state when a conditionally rendered stage disappears.
 # Reassign visualization keys so returning to the stage restores its controls.
@@ -100,7 +111,7 @@ if has_dataset():
             "원본 `df`와 분석용 `df_clean`을 서로 다른 복사본으로 보관하고 있습니다. "
             "이 화면의 현황은 원본 `df` 기준입니다."
         )
-        st.dataframe(basic_profile, width="stretch", hide_index=True)
+        st.dataframe(localized_columns(basic_profile), width="stretch", hide_index=True)
         st.markdown("#### 원본 데이터 미리보기")
         st.dataframe(df.head(20), width="stretch")
 

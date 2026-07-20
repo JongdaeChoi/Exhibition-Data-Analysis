@@ -1,0 +1,563 @@
+from __future__ import annotations
+
+from functools import wraps
+from typing import Any, Callable
+
+import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
+
+
+LANGUAGE_OPTIONS = ("한국어", "English")
+
+
+# Exact translations are also used for widget options. Keeping the underlying
+# Korean values unchanged prevents localization from changing analysis logic.
+EN: dict[str, str] = {
+    "데이터 분석": "Data Analysis",
+    "CSV 또는 Excel 데이터를 불러와 원본과 분석용 데이터셋으로 안전하게 분리합니다.": "Load CSV or Excel data and safely separate the original and analysis datasets.",
+    "1. 데이터 파일 선택": "1. Select Data File",
+    "로컬 파일": "Local File",
+    "파일 선택": "Select File",
+    "버튼을 누르면 운영체제의 파일 선택창이 열립니다.": "Click to open your operating system's file picker.",
+    "로컬 파일 적재": "Load Local File",
+    "Drive 파일 적재": "Load Drive File",
+    "Google Drive 공유 링크": "Google Drive Share Link",
+    "파일명 (선택)": "Filename (optional)",
+    "Drive 링크에서 파일명이 확인되지 않을 때 sample.csv처럼 입력": "Enter a name such as sample.csv if it cannot be detected from the Drive link",
+    "현재 단계에서는 '링크가 있는 모든 사용자'에게 공개된 Drive 파일을 지원합니다.": "This version supports Drive files shared with anyone who has the link.",
+    "2. 데이터 기본 현황": "2. Data Overview",
+    "파일명": "Filename",
+    "행": "Rows",
+    "변수": "Variables",
+    "전체 결측": "Total Missing",
+    "원본 `df`와 분석용 `df_clean`을 서로 다른 복사본으로 보관하고 있습니다. 이 화면의 현황은 원본 `df` 기준입니다.": "The original `df` and analysis `df_clean` are stored as separate copies. This overview is based on the original `df`.",
+    "#### 원본 데이터 미리보기": "#### Original Data Preview",
+    "3. 작업 단계": "3. Workflow Stage",
+    "표시할 작업": "Stage to Display",
+    "기본 현황": "Overview",
+    "전처리": "Preprocessing",
+    "시각화": "Visualization",
+    "인사이트": "Insight",
+    "선택한 단계만 실행하여 데이터 적재 후 화면 표시 속도를 높입니다.": "Only the selected stage is rendered to improve responsiveness.",
+    "파일을 선택하고 적재하면 데이터 기본 현황이 여기에 표시됩니다.": "Select and load a file to display its overview here.",
+    "전처리 작업 선택": "Select Preprocessing Task",
+    "결측값": "Missing Values",
+    "특정값 변경": "Replace Values",
+    "날짜 변수 분리": "Split Date Variable",
+    "Column 삭제": "Delete Columns",
+    "모든 작업은 분석용 `df_clean`에만 적용됩니다. 원본 `df`는 변경되지 않습니다.": "All operations apply only to `df_clean`; the original `df` remains unchanged.",
+    "#### 결측값 일괄 처리": "#### Batch Missing-Value Processing",
+    "처리할 컬럼의 처리방법을 선택하고, ‘특정값’인 경우 같은 행의 처리값을 입력하세요.": "Choose a method for each column and enter a replacement when using a specific value.",
+    "변수명": "Variable",
+    "데이터 타입": "Data Type",
+    "결측 개수": "Missing Count",
+    "결측률(%)": "Missing Rate (%)",
+    "처리방법": "Method",
+    "처리값": "Replacement",
+    "처리방법이 ‘특정값’일 때 입력합니다.": "Enter a value when the method is Specific Value.",
+    "처리 안 함": "No Action",
+    "특정값": "Specific Value",
+    "평균값": "Mean",
+    "중앙값": "Median",
+    "해당 행 삭제": "Delete Rows",
+    "선택한 결측값 처리": "Process Selected Missing Values",
+    "#### Unique Value 일괄 변경": "#### Batch Unique-Value Replacement",
+    "Unique Value 조회 페이지": "Unique Value Page",
+    "현재 Column": "Current Column",
+    "표시값": "Display Value",
+    "원본 데이터 타입": "Original Data Type",
+    "같게 표시되는 값에 여러 타입이 있으면 함께 표시됩니다.": "If identical display values have multiple types, all types are shown.",
+    "개수": "Count",
+    "이 값으로 변경할 행에만 입력하세요.": "Enter a value only for rows you want to replace.",
+    "입력한 특정값 변경": "Apply Entered Replacements",
+    "#### 날짜 파생변수 생성": "#### Create Date-Derived Variables",
+    "날짜 변수": "Date Variable",
+    "분리할 요소": "Components to Extract",
+    "년·월·일, 월·일, 일, 시간을 필요한 만큼 선택할 수 있습니다.": "Select any needed components: year-month-day, month-day, day, or hour.",
+    "날짜 변수 분리 실행": "Split Date Variable",
+    "#### Column 삭제": "#### Delete Columns",
+    "선택한 Column은 분석용 `df_clean`에서만 삭제됩니다. 원본 `df`에는 남아 있습니다.": "Selected columns are deleted only from `df_clean` and remain in the original `df`.",
+    "삭제할 Column": "Columns to Delete",
+    "선택한 Column 삭제": "Delete Selected Columns",
+    "삭제 예정": "To Delete",
+    "삭제 후": "After Deletion",
+    "전처리 결과 요약": "Preprocessing Summary",
+    "전처리 전체 초기화": "Reset All Preprocessing",
+    "최종 전처리 데이터 다운로드": "Download Final Preprocessed Data",
+    "CSV 다운로드": "Download CSV",
+    "Excel 다운로드": "Download Excel",
+    "데이터 시각화": "Data Visualization",
+    "시각화와 통계자료는 현재 전처리 데이터 `df_clean`을 기준으로 생성됩니다.": "Visualizations and statistics are generated from the current `df_clean` dataset.",
+    "변수별 데이터 타입": "Variable Data Types",
+    "시각화 요청방법": "Visualization Request Method",
+    "구조화 메뉴": "Structured Menu",
+    "텍스트 요청": "Text Request",
+    "#### Subplot 구성": "#### Subplot Layout",
+    "행 개수(n1)": "Rows (n1)",
+    "열 개수(n2)": "Columns (n2)",
+    "레이아웃 설정": "Layout Settings",
+    "#### 캔버스(Figure)": "#### Canvas (Figure)",
+    "#### Subplot": "#### Subplot",
+    "#### 레이아웃 여백": "#### Layout Margins",
+    "#### 차트(Axes)": "#### Chart (Axes)",
+    "#### 저장 설정": "#### Export Settings",
+    "Figure 배경색 방식": "Figure Background Color Mode",
+    "Figure 배경색": "Figure Background Color",
+    "Figure 배경 투명도": "Figure Background Opacity",
+    "Figure 테두리 표시": "Show Figure Border",
+    "Axes 배경색 방식": "Axes Background Color Mode",
+    "Axes 배경색": "Axes Background Color",
+    "Axes 배경 투명도": "Axes Background Opacity",
+    "Axes 테두리 표시": "Show Axes Border",
+    "가로 크기": "Width",
+    "세로 크기": "Height",
+    "배치 방식": "Layout Mode",
+    "영역별 설정": "Apply Settings To",
+    "전체 차트": "All Charts",
+    "선택한 Subplot": "Selected Subplot",
+    "대상 Subplot": "Target Subplot",
+    "X축 공유": "Share X-axis",
+    "Y축 공유": "Share Y-axis",
+    "테두리 위치": "Border Positions",
+    "테두리 두께": "Border Width",
+    "테두리 색상": "Border Color",
+    "테두리 투명도": "Border Opacity",
+    "저장 배경 투명": "Transparent Export Background",
+    "기본 폰트 색상": "Default Font Color",
+    "폰트": "Font",
+    "차트·데이터 설정": "Chart & Data Settings",
+    "Subplot별 Axes 설정": "Axes Settings by Subplot",
+    "##### 데이터 설정": "##### Data Settings",
+    "##### 제목 및 표시": "##### Title & Display",
+    "##### 데이터 표시 범위(Chart Element Range)": "##### Chart Element Range",
+    "##### 색상과 텍스트": "##### Color & Text",
+    "##### 차트 제목(Title)": "##### Chart Title",
+    "##### X축 및 Y축(Axis)": "##### X and Y Axes",
+    "##### 격자(Grid)": "##### Grid",
+    "##### 범례": "##### Legend",
+    "##### 값(Data Label) 표시": "##### Data Labels",
+    "##### 차트별 설정": "##### Chart-Specific Settings",
+    "##### 요소 테두리": "##### Element Border",
+    "##### 축 방향과 스케일": "##### Axis Direction & Scale",
+    "##### 기준선과 주석": "##### Reference Lines & Annotations",
+    "##### 기준선": "##### Reference Lines",
+    "차트 유형": "Chart Type",
+    "X1 변수": "X1 Variable",
+    "X2 변수": "X2 Variable",
+    "범주 변수(X1)": "Category Variable (X1)",
+    "그룹/색상 변수": "Group/Color Variable",
+    "X2 집계 대상": "X2 Aggregation Target",
+    "X3 집계 대상": "X3 Aggregation Target",
+    "비교 변수(X1~Xn)": "Comparison Variables (X1–Xn)",
+    "집계 방식": "Aggregation",
+    "행 개수": "Row Count",
+    "유효값 개수(결측 제외)": "Valid Count (excluding missing)",
+    "합계": "Sum",
+    "평균": "Mean",
+    "비율": "Ratio",
+    "비율(%)": "Ratio (%)",
+    "비율 기준": "Ratio Basis",
+    "전체 기준": "Overall",
+    "X1 내부 기준": "Within X1",
+    "X2 내부 기준": "Within X2",
+    "표현 방식": "Display Type",
+    "차트 제목": "Chart Title",
+    "값 표시": "Show Values",
+    "X-Y 축 전환": "Swap X-Y Axes",
+    "X축 값 정렬": "Sort X-axis Values",
+    "Y축 값 정렬": "Sort Y-axis Values",
+    "X축 라벨 입력값": "X-axis Label",
+    "Y축 라벨 입력값": "Y-axis Label",
+    "X축 반전": "Invert X-axis",
+    "Y축 반전": "Invert Y-axis",
+    "X 로그 스케일": "X Log Scale",
+    "Y 로그 스케일": "Y Log Scale",
+    "상위 N개": "Top N",
+    "하위 N개": "Bottom N",
+    "N 값": "N Value",
+    "전체": "All",
+    "범위 기준": "Range Mode",
+    "순위 기준": "Ranking Basis",
+    "나머지 항목": "Remaining Items",
+    "값 기준": "By Value",
+    "비율 기준": "By Ratio",
+    "원본 순서": "Original Order",
+    "제외": "Exclude",
+    "기타 항목으로 통합": "Combine as Other",
+    "기타": "Other",
+    "설정 변경 즉시 반영": "Apply Changes Immediately",
+    "시각화 실행": "Generate Visualization",
+    "요청 내용": "Request",
+    "시각화 설정을 입력하세요.": "Describe the visualization you want.",
+    "Pydantic 설정 조회·직접 수정": "View & Edit Pydantic Settings",
+    "아래 JSON을 직접 수정하면 수정된 Pydantic 값으로 검증하고 시각화합니다.": "Edit the JSON below to validate and visualize with the modified Pydantic values.",
+    "### 시각화 결과": "### Visualization Results",
+    "### 결과 다운로드": "### Download Results",
+    "통계자료를 구성하고 차트를 생성하고 있습니다...": "Preparing statistics and generating charts...",
+    "(없음)": "(None)",
+    "사용할 수 없음": "Unavailable",
+    "자동": "Auto",
+    "직접 입력": "Manual",
+    "표시 여부": "Visible",
+    "표시 방식": "Display Mode",
+    "표시 위치": "Position",
+    "색상": "Color",
+    "색상 팔레트": "Color Palette",
+    "기본 색상": "Preset Color",
+    "HEX 직접 입력": "Custom HEX",
+    "투명도": "Opacity",
+    "두께": "Width",
+    "굵기": "Weight",
+    "크기": "Size",
+    "위치": "Position",
+    "왼쪽": "Left",
+    "가운데": "Center",
+    "오른쪽": "Right",
+    "위": "Top",
+    "아래": "Bottom",
+    "오름차순": "Ascending",
+    "내림차순": "Descending",
+    "정렬 안 함": "No Sorting",
+    "값 정렬": "Sort Values",
+    "제목 표시": "Show Title",
+    "제목 입력값": "Title Text",
+    "글자 크기": "Font Size",
+    "글자 굵기": "Font Weight",
+    "글자색": "Font Color",
+    "글자 투명도": "Font Opacity",
+    "회전": "Rotation",
+    "라벨": "Label",
+    "라벨 표시": "Show Label",
+    "라벨 크기": "Label Size",
+    "라벨 굵기": "Label Weight",
+    "라벨 색상": "Label Color",
+    "라벨 투명도": "Label Opacity",
+    "라벨 위치": "Label Position",
+    "라벨 폰트 크기": "Label Font Size",
+    "라벨 회전": "Label Rotation",
+    "눈금 표시": "Show Ticks",
+    "눈금 크기": "Tick Size",
+    "눈금 굵기": "Tick Weight",
+    "눈금 색상": "Tick Color",
+    "눈금 투명도": "Tick Opacity",
+    "눈금 회전": "Tick Rotation",
+    "눈금 간격": "Tick Interval",
+    "눈금 간격 입력": "Set Tick Interval",
+    "숫자 표시 형식": "Number Format",
+    "숫자축 설정": "Numeric Axis Range",
+    "날짜 표시 범위": "Date Range",
+    "날짜 눈금 간격": "Date Tick Interval",
+    "날짜 표시 형식": "Date Format",
+    "전체 기간": "Full Period",
+    "시작일~종료일": "Start Date–End Date",
+    "최소값~최대값": "Minimum–Maximum",
+    "일": "Day",
+    "주": "Week",
+    "월": "Month",
+    "분기": "Quarter",
+    "연도": "Year",
+    "%Y년 %m월": "%Y year %m month",
+    "범례 표시": "Show Legend",
+    "범례 위치": "Legend Position",
+    "범례 제목": "Legend Title",
+    "격자 스타일": "Grid Style",
+    "격자 굵기": "Grid Width",
+    "격자 색상": "Grid Color",
+    "격자 투명도": "Grid Opacity",
+    "X축 격자": "X-axis Grid",
+    "Y축 격자": "Y-axis Grid",
+    "천 단위 구분": "Thousands Separator",
+    "소수점 1자리": "1 Decimal Place",
+    "소수점 2자리": "2 Decimal Places",
+    "정수": "Integer",
+    "백분율": "Percentage",
+    "표시 단위": "Display Unit",
+    "숫자 형식": "Number Format",
+    "결측값 포함": "Include Missing Values",
+    "양수에 + 표시": "Show + for Positive Values",
+    "음수 표시": "Negative Number Style",
+    "- 기호": "Minus Sign",
+    "괄호": "Parentheses",
+    "요소 내부": "Inside Element",
+    "요소 중앙": "Center of Element",
+    "요소 끝점": "Element End",
+    "요소 바깥쪽": "Outside Element",
+    "기준선 사용": "Use Reference Line",
+    "추가 기준선 개수": "Number of Additional Reference Lines",
+    "주석 개수": "Number of Annotations",
+    "내용": "Text",
+    "배경 상자 표시": "Show Background Box",
+    "화살표 표시": "Show Arrow",
+    "선 스타일": "Line Style",
+    "선 두께": "Line Width",
+    "선 투명도": "Line Opacity",
+    "차트 투명도": "Chart Opacity",
+    "마커": "Marker",
+    "마커 크기": "Marker Size",
+    "이동평균": "Moving Average",
+    "이동평균 기간": "Moving Average Window",
+    "누적합": "Cumulative Sum",
+    "정규화": "Normalize",
+    "추세선": "Trendline",
+    "밀도 표시": "Show Density",
+    "구간 수": "Number of Bins",
+    "구간 폭": "Bin Width",
+    "구간 폭 사용": "Use Bin Width",
+    "막대 방향": "Bar Orientation",
+    "막대 너비": "Bar Width",
+    "막대 간격": "Bar Gap",
+    "그룹 간 간격": "Group Gap",
+    "막대 모서리": "Bar Corners",
+    "각진 모서리": "Square Corners",
+    "둥근 모서리": "Rounded Corners",
+    "도넛 사용": "Use Donut",
+    "구멍 크기": "Hole Size",
+    "링 두께": "Ring Width",
+    "시작 각도": "Start Angle",
+    "그림자 사용": "Use Shadow",
+    "분리할 파이 선택": "Slices to Explode",
+    "분리 Width": "Explode Width",
+    "컬러맵": "Colormap",
+    "컬러바 표시": "Show Colorbar",
+    "셀 값 표시": "Show Cell Values",
+    "셀 경계선": "Cell Border Width",
+    "상관계수 표시": "Show Correlation Coefficients",
+    "해상도(DPI)": "Resolution (DPI)",
+    "저장 형식": "Export Format",
+    "출력 파일명": "Output Filename",
+    "메타데이터 포함": "Include Metadata",
+    "사용자 설정": "Custom",
+    "흰색": "White",
+    "밝은 회색": "Light Gray",
+    "회색": "Gray",
+    "검정": "Black",
+    "파랑": "Blue",
+    "주황": "Orange",
+    "API 공급자": "API Provider",
+    "모델": "Model",
+    "모델을 변경해도 저장된 대화 이력은 유지됩니다.": "Saved conversation history is preserved when the model changes.",
+    "참고자료·이미지 업로드": "Upload References or Images",
+    "참고자료 등록": "Add References",
+    "기존 대화 등록": "Upload Existing Conversation",
+    "기존 대화 불러오기": "Restore Conversation",
+    "비즈니스 인사이트 생성": "Generate Business Insight",
+    "현재 화면 지우기": "Clear Current View",
+    "현재 데이터": "Current Data",
+    "전처리 이력": "Preprocessing History",
+    "시각화 Source": "Visualization Sources",
+    "참고자료": "References",
+    "현재 df_clean, 전처리 이력, 기술통계, 저장된 시각화 자료, 첨부자료와 대화를 근거로 답합니다.": "Answers are grounded in the current `df_clean`, preprocessing history, descriptive statistics, saved visualization data, attachments, and conversation.",
+    "데이터 설명·조회·수정, 차트 또는 비즈니스 인사이트를 요청하세요.": "Ask for data explanations, queries, modifications, charts, or business insights.",
+    "실행한 Python 코드와 결과": "Executed Python Code & Results",
+    "차트 통계자료와 Pydantic 설정": "Chart Statistics & Pydantic Settings",
+    "ChartSpec JSON 직접 수정": "Edit ChartSpec JSON",
+    "수정한 Pydantic 설정으로 차트 재실행": "Rerun Chart with Edited Pydantic Settings",
+    "대화 내용 다운로드": "Download Conversation",
+    "대화·차트·코드 JSON 다운로드": "Download Conversation, Charts & Code (JSON)",
+    "보고서 Markdown 다운로드": "Download Report (Markdown)",
+    "한국어": "한국어",
+    "년·월·일": "Year-Month-Day",
+    "월·일": "Month-Day",
+    "시간": "Hour",
+    "Gemini 2.5 Flash · 빠른 응답, 일반 분석": "Gemini 2.5 Flash · Fast responses, general analysis",
+    "Gemini 2.5 Pro · 복잡한 분석, 코드 생성": "Gemini 2.5 Pro · Complex analysis and code generation",
+    "Gemini 3.1 Pro Preview · 최신 성능 미리보기": "Gemini 3.1 Pro Preview · Latest performance preview",
+    "GPT-5.6 Sol · 복잡한 분석, 고급 추론": "GPT-5.6 Sol · Complex analysis and advanced reasoning",
+    "GPT-5.6 Terra · 일반 분석": "GPT-5.6 Terra · General analysis",
+    "GPT-5.6 Luna · 빠른 응답, 대량 처리": "GPT-5.6 Luna · Fast responses and high-volume processing",
+    "데이터 개수": "Data Count",
+    "값": "Value",
+}
+
+
+# Only known application options are translated. User-provided column names
+# must remain exactly as uploaded, even when they happen to be Korean.
+_OPTION_KEYS = {
+    "기본 현황", "전처리", "시각화", "인사이트",
+    "결측값", "특정값 변경", "날짜 변수 분리", "Column 삭제",
+    "처리 안 함", "특정값", "평균값", "중앙값", "해당 행 삭제",
+    "구조화 메뉴", "텍스트 요청", "(없음)", "사용할 수 없음", "기본 색상", "HEX 직접 입력",
+    "행 개수", "유효값 개수(결측 제외)", "합계", "평균", "비율",
+    "전체 기준", "X1 내부 기준", "X2 내부 기준", "전체", "상위 N개", "하위 N개",
+    "값 기준", "비율 기준", "원본 순서", "제외", "기타 항목으로 통합",
+    "자동", "직접 입력", "왼쪽", "가운데", "오른쪽", "위", "아래",
+    "오름차순", "내림차순", "정렬 안 함", "정수", "소수점 1자리", "소수점 2자리",
+    "천 단위 구분", "백분율", "요소 내부", "요소 중앙", "요소 끝점", "요소 바깥쪽",
+    "- 기호", "괄호", "각진 모서리", "둥근 모서리", "전체 기간", "시작일~종료일",
+    "최소값~최대값", "일", "주", "월", "분기", "연도", "%Y년 %m월",
+    "사용자 설정", "전체 차트", "선택한 Subplot", "흰색", "밝은 회색", "회색",
+    "검정", "파랑", "주황", "년·월·일", "월·일", "시간",
+    "Gemini 2.5 Flash · 빠른 응답, 일반 분석",
+    "Gemini 2.5 Pro · 복잡한 분석, 코드 생성",
+    "Gemini 3.1 Pro Preview · 최신 성능 미리보기",
+    "GPT-5.6 Sol · 복잡한 분석, 고급 추론",
+    "GPT-5.6 Terra · 일반 분석",
+    "GPT-5.6 Luna · 빠른 응답, 대량 처리",
+}
+OPTION_EN = {key: EN[key] for key in _OPTION_KEYS if key in EN}
+
+
+# Dynamic labels (axis names, item numbers and counts) use these substitutions.
+PHRASES: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        {
+            "범주형 변수의 수치 인덱스 매핑": "categorical variable numeric-index mapping",
+            "통계자료와 요약 인사이트": "statistics and summary insight",
+            "축 라벨과 눈금 스타일": "axis label and tick style",
+            "기준선 라벨 표시": "Show reference-line label",
+            "처리 후에도 현재 작업 화면을 유지하고 조회 테이블을 최신 상태로 갱신합니다.": "The current task stays open and the table refreshes after processing.",
+            "차트 영역과 간격": "Chart padding",
+            "축선과 간격": "Axis padding",
+            "축과 간격": "Label padding",
+            "추가 기준선 개수": "Number of additional reference lines",
+            "기준선": "Reference Line",
+            "주석": "Annotation",
+            "현재 Column": "Current Column",
+            "총": "Total",
+            "페이지당": "per page",
+            "페이지": "page",
+            "개 메시지": "messages",
+            "개 컬럼": "columns",
+            "개": " items",
+            "건": " items",
+            "행 중 처음": "rows; showing the first",
+            "행": " rows",
+            "파일을 적재했습니다.": "file loaded.",
+            "첨부": "Attachment",
+            "기존 대화": "Existing conversation",
+            "참고자료": "References",
+            "변수": "Variable",
+            "범주 표시 순서": "category display order",
+            "사용": "Enable",
+            "기준 날짜": "date value",
+            "기준 범주": "category value",
+            "기준 수치": "numeric value",
+            "축 날짜": "axis date",
+            "축 범주": "axis category",
+            "축 수치": "axis value",
+            "축 제어": "axis control",
+            "축": "axis",
+        }.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+)
+
+
+def current_language() -> str:
+    return st.session_state.get("ui_language", "한국어")
+
+
+def translate(value: Any) -> Any:
+    if current_language() != "English" or not isinstance(value, str):
+        return value
+    exact = EN.get(value)
+    if exact is not None:
+        return exact
+    translated = value
+    for korean, english in PHRASES:
+        translated = translated.replace(korean, english)
+    return translated
+
+
+def _translate_exact(value: Any) -> Any:
+    if current_language() != "English" or not isinstance(value, str):
+        return value
+    return EN.get(value, value)
+
+
+def option_label(value: Any) -> str:
+    text = str(value)
+    if current_language() != "English":
+        return text
+    return OPTION_EN.get(text, text)
+
+
+def localized_columns(frame):
+    """Return a shallow copy with application-generated column labels localized."""
+    if current_language() != "English":
+        return frame
+    return frame.rename(columns={column: EN.get(str(column), column) for column in frame.columns})
+
+
+def _translated_call(
+    original: Callable,
+    label_index: int,
+    *,
+    options: bool = False,
+    exact_only: bool = False,
+):
+    @wraps(original)
+    def wrapper(*args, **kwargs):
+        values = list(args)
+        translator = _translate_exact if exact_only else translate
+        if len(values) > label_index:
+            values[label_index] = translator(values[label_index])
+        elif "label" in kwargs:
+            kwargs["label"] = translator(kwargs["label"])
+        if isinstance(kwargs.get("help"), str):
+            kwargs["help"] = translate(kwargs["help"])
+        if options:
+            formatter = kwargs.get("format_func", str)
+
+            def localized_formatter(item):
+                return option_label(formatter(item))
+
+            kwargs["format_func"] = localized_formatter
+        return original(*values, **kwargs)
+
+    wrapper._streamlit_i18n = True  # type: ignore[attr-defined]
+    return wrapper
+
+
+def _translated_tabs(original: Callable, labels_index: int):
+    @wraps(original)
+    def wrapper(*args, **kwargs):
+        values = list(args)
+        if len(values) > labels_index:
+            values[labels_index] = [translate(item) for item in values[labels_index]]
+        elif "tabs" in kwargs:
+            kwargs["tabs"] = [translate(item) for item in kwargs["tabs"]]
+        return original(*values, **kwargs)
+
+    wrapper._streamlit_i18n = True  # type: ignore[attr-defined]
+    return wrapper
+
+
+def install_streamlit_i18n() -> None:
+    """Localize Streamlit labels without changing stored widget option values."""
+    if getattr(st, "_analysis_i18n_installed", False):
+        return
+    label_methods = {
+        "title", "header", "subheader", "caption", "markdown", "info", "warning",
+        "success", "error", "button", "download_button", "file_uploader", "text_input",
+        "text_area", "checkbox", "number_input", "slider", "expander", "metric", "status",
+        "spinner", "toggle", "color_picker", "date_input", "chat_input",
+    }
+    option_methods = {"selectbox", "multiselect", "radio", "segmented_control"}
+    for name in label_methods | option_methods:
+        if hasattr(st, name):
+            setattr(
+                st,
+                name,
+                _translated_call(
+                    getattr(st, name),
+                    0,
+                    options=name in option_methods,
+                    exact_only=name == "markdown",
+                ),
+            )
+        if hasattr(DeltaGenerator, name):
+            setattr(
+                DeltaGenerator,
+                name,
+                _translated_call(
+                    getattr(DeltaGenerator, name),
+                    1,
+                    options=name in option_methods,
+                    exact_only=name == "markdown",
+                ),
+            )
+    st.tabs = _translated_tabs(st.tabs, 0)
+    DeltaGenerator.tabs = _translated_tabs(DeltaGenerator.tabs, 1)
+    st._analysis_i18n_installed = True

@@ -8,6 +8,7 @@ from data.profiler import build_basic_profile
 
 
 SESSION_DEFAULTS = {
+    "ui_language": "한국어",
     "df": None,
     "df_clean": None,
     "source_filename": None,
