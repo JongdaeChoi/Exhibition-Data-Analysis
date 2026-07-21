@@ -114,6 +114,45 @@ def test_multi_variable_and_correlation_heatmap(sample_frame: pd.DataFrame) -> N
         build_statistics(sample_frame, mixed)
 
 
+def test_correlation_heatmap_applies_axis_label_and_tick_properties(sample_frame: pd.DataFrame) -> None:
+    correlation = ChartSpec(
+        chart_type="correlation_heatmap",
+        variables=["연도", "매출", "만족도"],
+        x_label="선택 변수 (X)",
+        y_label="선택 변수 (Y)",
+        advanced={
+            "x_label_size": 14,
+            "y_label_size": 15,
+            "x_label_weight": "bold",
+            "y_label_weight": "bold",
+            "x_tick_rotation": 35,
+            "y_tick_rotation": -25,
+            "x_tick_size": 11,
+            "y_tick_size": 12,
+            "x_tick_weight": "bold",
+            "y_tick_weight": "bold",
+            "x_tick_color": "#123456",
+            "y_tick_color": "#654321",
+            "x_tick_alpha": 0.7,
+            "y_tick_alpha": 0.6,
+        },
+    )
+
+    result = build_visualization(sample_frame, [correlation], FigureSpec())
+    axis = result.figure.axes[0]
+
+    assert axis.get_xlabel() == "선택 변수 (X)"
+    assert axis.get_ylabel() == "선택 변수 (Y)"
+    assert axis.xaxis.label.get_fontsize() == pytest.approx(14)
+    assert axis.yaxis.label.get_fontsize() == pytest.approx(15)
+    assert all(label.get_rotation() == pytest.approx(35) for label in axis.get_xticklabels())
+    assert all(label.get_rotation() == pytest.approx(335) for label in axis.get_yticklabels())
+    assert all(label.get_fontsize() == pytest.approx(11) for label in axis.get_xticklabels())
+    assert all(label.get_fontsize() == pytest.approx(12) for label in axis.get_yticklabels())
+    assert all(label.get_fontweight() == "bold" for label in axis.get_xticklabels())
+    assert all(label.get_fontweight() == "bold" for label in axis.get_yticklabels())
+
+
 def test_multiple_reference_lines_annotations_and_figure_border(sample_frame: pd.DataFrame) -> None:
     spec = ChartSpec(
         chart_type="bar", x="국가",

@@ -729,7 +729,7 @@ def render_correlation_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -
         linewidths=spec.advanced.heatmap_linewidth,
         linecolor=to_rgba(spec.advanced.heatmap_linecolor, spec.advanced.heatmap_linealpha),
     )
-    _apply_common(ax, spec.model_copy(update={"x": "변수", "x_label": "", "y_label": ""}))
+    _apply_common(ax, spec)
 
 
 RENDERERS = {

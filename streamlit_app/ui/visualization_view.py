@@ -288,16 +288,21 @@ def _basic_controls(index: int, columns: list[str], numeric_columns: list[str]) 
     y_label = ""
     if has_axes:
         label_signature_key = f"{prefix}_axis_label_signature"
-        label_signature = (x, selected_y, aggregation, x_y_swap)
+        label_signature = (chart_type, x, selected_y, aggregation, tuple(variables), x_y_swap)
         if st.session_state.get(label_signature_key) != label_signature:
-            st.session_state[f"{prefix}_xlabel"] = (
-                selected_y or translate("값") if x_y_swap else x
-            )
-            st.session_state[f"{prefix}_ylabel"] = (
-                x if x_y_swap else (
-                    selected_y or translate("비율(%)" if aggregation == "ratio" else "값")
+            if chart_type == "correlation_heatmap":
+                axis_label = translate("변수")
+                st.session_state[f"{prefix}_xlabel"] = axis_label
+                st.session_state[f"{prefix}_ylabel"] = axis_label
+            else:
+                st.session_state[f"{prefix}_xlabel"] = (
+                    selected_y or translate("값") if x_y_swap else x
                 )
-            )
+                st.session_state[f"{prefix}_ylabel"] = (
+                    x if x_y_swap else (
+                        selected_y or translate("비율(%)" if aggregation == "ratio" else "값")
+                    )
+                )
             st.session_state[label_signature_key] = label_signature
         x_label = st.session_state[f"{prefix}_xlabel"]
         y_label = st.session_state[f"{prefix}_ylabel"]
@@ -414,7 +419,7 @@ def _advanced_controls(index: int, basic: dict, frame: pd.DataFrame) -> Advanced
     values["title_alpha"] = title_e.slider("투명도", 0.0, 1.0, 1.0, 0.05, key=f"{prefix}_title_alpha", disabled=not values["title_visible"])
     values["title_pad"] = title_f.slider("차트 영역과 간격", 0.0, 100.0, 6.0, 1.0, key=f"{prefix}_title_pad", disabled=not values["title_visible"])
 
-    if chart_type not in {"pie", "correlation_heatmap"}:
+    if chart_type != "pie":
         st.markdown("##### X축 및 Y축(Axis)")
         for axis_name, label_location_options in (("x", ["left", "center", "right"]), ("y", ["bottom", "center", "top"])):
             st.caption(translate(f"{axis_name.upper()}축 라벨과 눈금 스타일"))
@@ -1263,7 +1268,7 @@ def render_visualization(*, preserve_existing_result: bool = False) -> None:
         )
         action_a, action_b = st.columns([1, 3], gap="small")
         auto_update = action_a.checkbox(
-            "설정 변경 즉시 반영", True, key="visualization_auto_update",
+            "설정 변경 즉시 반영", False, key="visualization_auto_update",
             help="첫 시각화 실행 이후 설정 변경 시 현재 차트를 자동 갱신합니다.",
         )
         run_requested = action_b.button(
