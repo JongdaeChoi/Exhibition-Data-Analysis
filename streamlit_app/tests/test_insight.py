@@ -21,7 +21,11 @@ from insight.service import (
     rebuild_chart_record,
     restore_history,
 )
-from ui.insight_view import _apply_restored_model_before_widgets, _configured_api_key
+from ui.insight_view import (
+    _apply_restored_model_before_widgets,
+    _configured_api_key,
+    _read_uploaded_histories,
+)
 
 
 @pytest.fixture
@@ -141,6 +145,45 @@ def test_history_json_and_markdown_round_trip(sample_frames) -> None:
     assert "# 비즈니스 인사이트" in markdown
     assert "핵심 요약입니다." in markdown
     assert json.loads(payload)["data_signature"]["shape"] == [3, 3]
+
+
+def test_multiple_conversation_uploads_keep_valid_files(sample_frames) -> None:
+    _, clean = sample_frames
+
+    class Uploaded:
+        def __init__(self, name: str, content: bytes):
+            self.name = name
+            self._content = content
+
+        def getvalue(self) -> bytes:
+            return self._content
+
+    first = history_payload_bytes(
+        [InsightMessage(role="model", text="first").model_dump(mode="json")],
+        "gpt-5.6-sol",
+        "first.csv",
+        clean,
+        "OpenAI",
+    )
+    second = history_payload_bytes(
+        [InsightMessage(role="model", text="second").model_dump(mode="json")],
+        "gemini-2.5-flash",
+        "second.csv",
+        clean,
+        "Gemini",
+    )
+    history, model, errors, restored_files = _read_uploaded_histories(
+        [
+            Uploaded("first.json", first),
+            Uploaded("broken.json", b"{not-json"),
+            Uploaded("second.json", second),
+        ]
+    )
+
+    assert [message["text"] for message in history] == ["first", "second"]
+    assert model == "gemini-2.5-flash"
+    assert restored_files == 2
+    assert len(errors) == 1 and errors[0].startswith("broken.json:")
 
 
 def test_restored_model_is_applied_before_widget_creation(monkeypatch) -> None:

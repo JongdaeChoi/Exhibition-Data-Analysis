@@ -190,17 +190,43 @@ def _render_history(history: list[dict], visible_from: int = 0) -> None:
                         st.dataframe(statistics, width="stretch", hide_index=True)
 
 
-def _restore_uploaded_history(uploaded) -> None:
-    history, saved_model = restore_history(uploaded.getvalue(), uploaded.name)
-    st.session_state.insight_history = history
+def _read_uploaded_histories(uploaded_files) -> tuple[list[dict], str | None, list[str], int]:
+    """Read independent conversation files and keep valid files when one fails."""
+    combined_history: list[dict] = []
+    saved_model: str | None = None
+    errors: list[str] = []
+    restored_files = 0
+    for uploaded in uploaded_files or []:
+        try:
+            history, file_model = restore_history(uploaded.getvalue(), uploaded.name)
+            combined_history.extend(history)
+            restored_files += 1
+            if file_model in MODEL_OPTIONS:
+                saved_model = file_model
+        except (ValueError, TypeError, UnicodeError) as exc:
+            errors.append(f"{uploaded.name}: {exc}")
+    return combined_history, saved_model, errors, restored_files
+
+
+def _restore_uploaded_histories(uploaded_files) -> None:
+    history, saved_model, errors, restored_files = _read_uploaded_histories(uploaded_files)
+    if restored_files:
+        st.session_state.insight_history = history
     if saved_model in MODEL_OPTIONS:
         st.session_state.insight_restored_model = saved_model
         st.session_state.insight_restored_provider = next(
             provider for provider, models in PROVIDER_MODELS.items() if saved_model in models
         )
     st.session_state.insight_visible_from = 0
-    st.session_state.insight_notice = f"기존 대화 {len(history):,}개 메시지를 등록했습니다."
-    st.session_state.insight_error = None
+    st.session_state.insight_notice = (
+        f"기존 대화 파일 {restored_files:,}개에서 {len(history):,}개 메시지를 등록했습니다."
+        if restored_files
+        else None
+    )
+    st.session_state.insight_history_restore_errors = errors
+    st.session_state.insight_error = (
+        None if restored_files or not errors else "기존 대화 파일을 복원하지 못했습니다."
+    )
     st.rerun()
 
 
@@ -280,16 +306,14 @@ def render_insight() -> None:
             _register_references(references_upload)
 
         history_upload = history_col.file_uploader(
-            "기존 대화 등록", type=["json", "md", "txt"], key="insight_history_upload",
+            "기존 대화 등록", type=["json", "md", "txt"],
+            accept_multiple_files=True, key="insight_history_upload",
         )
         if history_col.button(
-            "기존 대화 불러오기", disabled=history_upload is None,
+            "기존 대화 불러오기", disabled=not history_upload,
             key="restore_insight_history", width="stretch",
         ):
-            try:
-                _restore_uploaded_history(history_upload)
-            except (ValueError, TypeError) as exc:
-                st.error(str(exc))
+            _restore_uploaded_histories(history_upload)
 
         reference_datasets = st.session_state.get("insight_reference_datasets", {})
         dataset_options = ["main", *reference_datasets.keys()]
@@ -343,6 +367,9 @@ def render_insight() -> None:
     reference_errors = st.session_state.pop("insight_reference_errors", [])
     for reference_error in reference_errors:
         st.warning(reference_error)
+    history_restore_errors = st.session_state.pop("insight_history_restore_errors", [])
+    for history_restore_error in history_restore_errors:
+        st.warning(history_restore_error)
     evidence_columns = st.columns(5)
     english = current_language() == "English"
     evidence_columns[0].metric(

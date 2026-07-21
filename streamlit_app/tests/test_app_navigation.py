@@ -192,6 +192,11 @@ def test_language_selection_localizes_all_workflow_stages() -> None:
     app.run()
     assert app.session_state.ui_language == "English"
     assert "Generate Business Insight" in {item.label for item in app.button}
+    assert {item.label for item in app.file_uploader} >= {
+        "Select File",
+        "Upload Reference Datasets",
+        "Upload Existing Conversations",
+    }
     insight_metrics = {item.label: str(item.value) for item in app.metric}
     assert insight_metrics["Current Data"].endswith("rows")
     assert insight_metrics["Preprocessing History"] == "0"
