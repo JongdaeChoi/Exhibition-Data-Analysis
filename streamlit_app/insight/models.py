@@ -22,7 +22,7 @@ PROVIDER_MODELS = {
 }
 MODEL_LABELS = {
     "gemini-2.5-flash": "Gemini 2.5 Flash · 빠른 응답, 일반 분석",
-    "gemini-2.5-pro": "Gemini 2.5 Pro · 복잡한 분석, 코드 생성",
+    "gemini-2.5-pro": "Gemini 2.5 Pro · 복잡한 분석, 고급 추론",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview · 최신 성능 미리보기",
     "gpt-5.6-sol": "GPT-5.6 Sol · 복잡한 분석, 고급 추론",
     "gpt-5.6-terra": "GPT-5.6 Terra · 일반 분석",
@@ -37,7 +37,7 @@ class InsightAttachment(BaseModel):
     id: str
     filename: str
     mime_type: str
-    kind: Literal["document", "image"]
+    kind: Literal["document", "image", "dataset"]
     content_base64: str = ""
     extracted_text: str = ""
 
@@ -102,11 +102,9 @@ class InsightChartInput(BaseModel):
 class InsightDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["text", "data", "chart", "chart_with_insight", "business_insight"]
+    action: Literal["text", "chart", "chart_with_insight", "business_insight"]
     answer: str = ""
     chart_spec: InsightChartInput | None = None
-    python_code: str = ""
-    modifies_df_clean: bool = False
 
     @model_validator(mode="after")
     def validate_action(self):
@@ -114,10 +112,6 @@ class InsightDecision(BaseModel):
             raise ValueError("차트 요청에는 chart_spec이 필요합니다.")
         if self.action in {"text", "business_insight"} and not self.answer.strip():
             raise ValueError("텍스트 요청에는 answer가 필요합니다.")
-        if self.action == "data" and not self.python_code.strip():
-            raise ValueError("데이터 요청에는 python_code가 필요합니다.")
-        if self.action != "data" and (self.python_code.strip() or self.modifies_df_clean):
-            raise ValueError("Python 코드와 df_clean 수정 여부는 데이터 요청에서만 지정할 수 있습니다.")
         return self
 
 

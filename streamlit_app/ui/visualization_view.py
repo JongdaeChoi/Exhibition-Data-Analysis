@@ -12,7 +12,6 @@ from visualization.service import (
     automatic_chart_title,
     build_visualization,
     figure_to_bytes,
-    parse_text_request,
     source_payload,
     source_payload_bytes,
     summarize_artifact,
@@ -1233,12 +1232,7 @@ def render_visualization(*, preserve_existing_result: bool = False) -> None:
             width="stretch",
             hide_index=True,
         )
-    method = st.radio(
-        "시각화 요청방법",
-        ["구조화 메뉴", "텍스트 요청"],
-        horizontal=True,
-        key="visualization_request_method",
-    )
+    st.caption("구조화 메뉴에서 ChartSpec을 생성하고 Pydantic 검증 후 차트를 실행합니다.")
     st.markdown("#### Subplot 구성")
     subplot_a, subplot_b = st.columns(2, gap="small")
     rows = int(subplot_a.number_input(
@@ -1257,16 +1251,8 @@ def render_visualization(*, preserve_existing_result: bool = False) -> None:
     )
     figure_spec = _figure_controls(rows, columns)
     try:
-        if method == "텍스트 요청":
-            request = st.text_area(
-                "요청 내용",
-                placeholder="예: 국가별 참가업체수 합계 막대그래프; 조사일자_년월별 개수 추세선",
-                key="visualization_text_request",
-            )
-            specs = parse_text_request(request, frame, chart_count) if request.strip() else []
-        else:
-            specs = _structured_specs(frame, chart_count)
-        specs = _editable_pydantic_specs(specs, method)
+        specs = _structured_specs(frame, chart_count)
+        specs = _editable_pydantic_specs(specs, "structured")
         render_signature = json.dumps(
             {
                 "figure": figure_spec.model_dump(mode="json"),

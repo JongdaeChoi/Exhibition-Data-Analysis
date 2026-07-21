@@ -3,12 +3,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 
 import pandas as pd
 import streamlit as st
 
+from core.config import configured_api_keys, default_ai_provider
 from core.i18n import current_language, localized_table, translate
+from data.loader import DataLoadError, load_table
 from insight.context import build_evidence_context
 from insight.models import (
     MODEL_OPTIONS,
@@ -27,23 +28,11 @@ from insight.service import (
 )
 
 
-def _configured_api_key(entered: str, provider: str = "Gemini") -> tuple[str | None, str]:
-    if entered.strip():
-        return entered.strip(), "화면 입력"
-    names = ("OPENAI_API_KEY",) if provider == "OpenAI" else ("GEMINI_API_KEY", "GOOGLE_API_KEY")
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value, f"환경변수 {name}"
-    secret_names = names if provider == "OpenAI" else (*names, "exhibition")
-    try:
-        for name in secret_names:
-            value = st.secrets.get(name)
-            if value:
-                return str(value), f"Streamlit secrets {name}"
-    except (FileNotFoundError, KeyError, AttributeError):
-        pass
-    return None, "미설정"
+def _configured_api_key(provider: str = "OpenAI") -> tuple[str | None, str]:
+    """Return a server-side credential without exposing or persisting its value."""
+    value = configured_api_keys().get(provider)
+    expected = "OPENAI_API_KEY" if provider == "OpenAI" else "GEMINI_API_KEY"
+    return (value, f"Streamlit Secrets / environment · {expected}") if value else (None, "미설정")
 
 
 def _decode_document(raw: bytes) -> str:
@@ -61,23 +50,40 @@ def _attachment_from_upload(uploaded) -> InsightAttachment:
         raise ValueError(f"{uploaded.name}: 파일 크기는 5MB 이하여야 합니다.")
     mime_type = uploaded.type or "application/octet-stream"
     is_image = mime_type.startswith("image/")
-    if not is_image and not uploaded.name.lower().endswith((".json", ".txt", ".md")):
-        raise ValueError(f"{uploaded.name}: JSON, TXT, MD 또는 이미지 파일만 등록할 수 있습니다.")
+    suffix = uploaded.name.lower().rsplit(".", 1)[-1]
+    tabular = suffix in {"csv", "xlsx", "xls", "json"}
+    if not is_image and suffix not in {"csv", "xlsx", "xls", "json", "txt"}:
+        raise ValueError(f"{uploaded.name}: Excel, CSV, JSON 또는 TXT 파일만 등록할 수 있습니다.")
     digest = hashlib.sha256(raw).hexdigest()[:16]
     extracted = ""
-    if not is_image:
-        extracted = _decode_document(raw)
-        if uploaded.name.lower().endswith(".json"):
-            try:
-                extracted = json.dumps(json.loads(extracted), ensure_ascii=False, indent=2)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"{uploaded.name}: JSON 형식이 올바르지 않습니다.") from exc
-        extracted = extracted[:100_000]
+    if tabular:
+        try:
+            if suffix == "json":
+                value = json.loads(_decode_document(raw))
+                frame = pd.DataFrame(value if isinstance(value, list) else value.get("data", value))
+            else:
+                frame = load_table(raw, uploaded.name).df
+        except (DataLoadError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{uploaded.name}: 데이터셋을 읽을 수 없습니다. {exc}") from exc
+        if frame.empty:
+            raise ValueError(f"{uploaded.name}: 데이터가 비어 있습니다.")
+        st.session_state.setdefault("insight_reference_datasets", {})[digest] = {
+            "filename": uploaded.name,
+            "frame": frame,
+        }
+        description = frame.describe(include="all").transpose().reset_index().head(100)
+        extracted = (
+            f"[참고 데이터셋] {uploaded.name}\n행={len(frame)}, 열={frame.shape[1]}\n"
+            f"변수={list(map(str, frame.columns))}\n"
+            f"기술통계={description.to_json(force_ascii=False, orient='records', default_handler=str)}"
+        )[:100_000]
+    elif not is_image:
+        extracted = _decode_document(raw)[:100_000]
     return InsightAttachment(
         id=digest,
         filename=uploaded.name,
         mime_type=mime_type,
-        kind="image" if is_image else "document",
+        kind="image" if is_image else "dataset" if tabular else "document",
         content_base64=base64.b64encode(raw).decode("ascii") if is_image else "",
         extracted_text=extracted,
     )
@@ -211,18 +217,28 @@ def _register_references(uploaded_files) -> None:
     current = [InsightAttachment.model_validate(item) for item in st.session_state.get("insight_references", [])]
     by_id = {item.id: item for item in current}
     pending = set(st.session_state.get("insight_pending_attachment_ids", []))
+    errors = []
+    success_count = 0
     for uploaded in uploaded_files or []:
-        item = _attachment_from_upload(uploaded)
-        by_id[item.id] = item
-        pending.add(item.id)
+        try:
+            item = _attachment_from_upload(uploaded)
+            by_id[item.id] = item
+            pending.add(item.id)
+            success_count += 1
+        except (ValueError, TypeError) as exc:
+            errors.append(str(exc))
     st.session_state.insight_references = [item.model_dump(mode="json") for item in by_id.values()]
     st.session_state.insight_pending_attachment_ids = list(pending)
-    st.session_state.insight_notice = f"참고자료 {len(uploaded_files or []):,}개를 분석 컨텍스트에 등록했습니다."
+    st.session_state.insight_notice = f"참고자료 {success_count:,}개를 분석 컨텍스트에 등록했습니다."
+    st.session_state.insight_reference_errors = errors
     st.rerun()
 
 
 def render_insight() -> None:
     _apply_restored_model_before_widgets()
+    api_keys = configured_api_keys()
+    if st.session_state.get("insight_provider") not in PROVIDER_MODELS:
+        st.session_state.insight_provider = default_ai_provider(api_keys)
     st.header("Business Insight")
     st.caption(
         "현재 df_clean, 전처리 이력, 기술통계, 저장된 시각화 자료, 첨부자료와 대화를 근거로 답합니다."
@@ -231,7 +247,7 @@ def render_insight() -> None:
     history = list(st.session_state.get("insight_history", []))
 
     with st.container(border=True):
-        provider_col, model_col, key_col = st.columns([1, 1.4, 2], gap="small")
+        provider_col, model_col = st.columns([1, 2], gap="small")
         provider = provider_col.selectbox(
             "API 공급자", tuple(PROVIDER_MODELS), key="insight_provider"
         )
@@ -243,29 +259,17 @@ def render_insight() -> None:
             format_func=lambda value: MODEL_LABELS.get(value, value),
             help="모델을 변경해도 저장된 대화 이력은 유지됩니다.",
         )
-        key_cache = dict(st.session_state.get("insight_api_keys", {}))
-        api_widget_key = f"insight_api_key_{provider}"
-        if api_widget_key not in st.session_state:
-            st.session_state[api_widget_key] = key_cache.get(provider, "")
-        entered_key = key_col.text_input(
-            f"{provider} API Key (선택)", type="password", key=api_widget_key,
-        )
-        if entered_key.strip():
-            key_cache[provider] = entered_key.strip()
-        else:
-            key_cache.pop(provider, None)
-        st.session_state.insight_api_keys = key_cache
-        api_key, key_source = _configured_api_key(entered_key, provider)
+        api_key, key_source = _configured_api_key(provider)
         if api_key:
             st.success(f"API 인증 준비 완료 · {key_source}")
         else:
             expected = "OPENAI_API_KEY" if provider == "OpenAI" else "GEMINI_API_KEY"
-            st.warning(f"`{expected}`를 설정하거나 API Key를 입력하세요.")
+            st.warning(f"Streamlit Secrets 또는 환경변수에 `{expected}`를 설정하세요.")
 
         reference_col, history_col = st.columns(2, gap="small")
         references_upload = reference_col.file_uploader(
-            "참고자료·이미지 업로드",
-            type=["json", "txt", "md", "png", "jpg", "jpeg", "webp"],
+            "참고 데이터셋 업로드",
+            type=["csv", "xlsx", "xls", "json", "txt"],
             accept_multiple_files=True,
             key="insight_reference_upload",
         )
@@ -273,10 +277,7 @@ def render_insight() -> None:
             "참고자료 등록", disabled=not references_upload,
             key="register_insight_references", width="stretch",
         ):
-            try:
-                _register_references(references_upload)
-            except (ValueError, TypeError) as exc:
-                st.error(str(exc))
+            _register_references(references_upload)
 
         history_upload = history_col.file_uploader(
             "기존 대화 등록", type=["json", "md", "txt"], key="insight_history_upload",
@@ -289,6 +290,30 @@ def render_insight() -> None:
                 _restore_uploaded_history(history_upload)
             except (ValueError, TypeError) as exc:
                 st.error(str(exc))
+
+        reference_datasets = st.session_state.get("insight_reference_datasets", {})
+        dataset_options = ["main", *reference_datasets.keys()]
+        dataset_labels = {
+            value: (
+                f"주 분석 데이터 · {st.session_state.current_file_name}"
+                if value == "main"
+                else f"참고 데이터 · {reference_datasets[value]['filename']}"
+            )
+            for value in dataset_options
+        }
+        label_to_id = {label: value for value, label in dataset_labels.items()}
+        selected_id = st.session_state.get("insight_active_dataset", "main")
+        if selected_id not in dataset_options:
+            selected_id = "main"
+        selected_dataset_label = st.selectbox(
+            "Insight에서 사용할 데이터셋",
+            list(label_to_id),
+            index=dataset_options.index(selected_id),
+            key="insight_active_dataset_label",
+            help="데이터셋은 자동 병합되지 않으며 선택한 한 파일만 계산과 차트에 사용합니다.",
+        )
+        active_dataset_id = label_to_id[selected_dataset_label]
+        st.session_state.insight_active_dataset = active_dataset_id
 
         action_col, clear_col = st.columns([3, 1], gap="small")
         insight_requested = action_col.button(
@@ -306,6 +331,18 @@ def render_insight() -> None:
         InsightAttachment.model_validate(item)
         for item in st.session_state.get("insight_references", [])
     ]
+    if active_dataset_id == "main":
+        analysis_frame = frame
+        analysis_original = st.session_state.df
+        analysis_filename = st.session_state.source_filename or "data"
+    else:
+        selected_reference = st.session_state.insight_reference_datasets[active_dataset_id]
+        analysis_frame = selected_reference["frame"]
+        analysis_original = analysis_frame
+        analysis_filename = selected_reference["filename"]
+    reference_errors = st.session_state.pop("insight_reference_errors", [])
+    for reference_error in reference_errors:
+        st.warning(reference_error)
     evidence_columns = st.columns(5)
     english = current_language() == "English"
     evidence_columns[0].metric(
@@ -337,7 +374,7 @@ def render_insight() -> None:
     _render_history(history, visible_from)
 
     typed_question = st.chat_input(
-        "데이터 설명·조회·수정, 차트 또는 비즈니스 인사이트를 요청하세요.",
+        "데이터 설명·조회, 차트 또는 비즈니스 인사이트를 요청하세요.",
         key="insight_question",
     )
     question = (
@@ -361,9 +398,9 @@ def render_insight() -> None:
         try:
             with st.spinner(f"{provider} 모델이 요청 목적과 분석 근거를 확인하고 있습니다..."):
                 evidence = build_evidence_context(
-                    st.session_state.df,
-                    frame,
-                    st.session_state.source_filename,
+                    analysis_original,
+                    analysis_frame,
+                    analysis_filename,
                     st.session_state.get("preprocessing_history", []),
                     st.session_state.get("visualization_sources", []),
                     references,
@@ -373,9 +410,9 @@ def render_insight() -> None:
                     provider=provider,
                     model=model,
                     question=question,
-                    original_frame=st.session_state.df,
-                    frame=frame,
-                    source_filename=st.session_state.source_filename or "data",
+                    original_frame=analysis_original,
+                    frame=analysis_frame,
+                    source_filename=analysis_filename,
                     evidence_context=evidence,
                     history=previous_history,
                     attachments=references,
@@ -383,20 +420,6 @@ def render_insight() -> None:
                 )
             st.session_state.insight_history.append(execution.message.model_dump(mode="json"))
             st.session_state.insight_pending_attachment_ids = []
-            if execution.updated_frame is not None:
-                before_shape = tuple(frame.shape)
-                st.session_state.df_clean = execution.updated_frame
-                preprocessing = list(st.session_state.get("preprocessing_history", []))
-                preprocessing.append(
-                    {
-                        "section": "Insight Chat",
-                        "operation": "사용자 요청에 따른 df_clean 수정",
-                        "before_shape": before_shape,
-                        "after_shape": tuple(execution.updated_frame.shape),
-                        "code": execution.message.code.code if execution.message.code else "",
-                    }
-                )
-                st.session_state.preprocessing_history = preprocessing
             if execution.visualization_source is not None:
                 sources = list(st.session_state.get("visualization_sources", []))
                 sources.append(execution.visualization_source)

@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 *.key
 *.pem
 
@@ -14,6 +15,8 @@ venv/
 
 # Local datasets and generated chat exports
 data/
+!streamlit_app/data/
+!streamlit_app/data/storage.py
 *.csv
 *.xls
 *.xlsx
@@ -24,4 +27,3 @@ exhibition_chat_*.json
 .idea/
 .DS_Store
 Thumbs.db
-

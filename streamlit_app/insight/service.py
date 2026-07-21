@@ -13,12 +13,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pydantic import ValidationError
 
-from insight.code_runner import InsightCodeError, execute_generated_code
 from insight.context import bounded_history_text
 from insight.models import (
     InsightAttachment,
     InsightChartRecord,
-    InsightCodeRecord,
     InsightDecision,
     InsightHistoryPayload,
     InsightMessage,
@@ -36,7 +34,6 @@ class InsightAPIError(RuntimeError):
 class InsightExecution:
     message: InsightMessage
     visualization_source: dict[str, Any] | None = None
-    updated_frame: pd.DataFrame | None = None
 
 
 def rebuild_chart_record(
@@ -78,24 +75,15 @@ INSIGHT_SYSTEM_PROMPT = """
 - 지원되지 않는 요청을 다른 기능으로 임의 변경하지 말고 지원되지 않는 항목을 안내하세요.
 
 [요청 분류]
-- text: 설명, 요약, 해석 또는 일반 질의응답
-- data: df_clean 조회, 필터링, 집계, 생성, 수정 또는 삭제
+- text: 설명, 요약, 해석, 데이터 조회 또는 일반 질의응답
 - chart: 차트만 생성
 - chart_with_insight: 차트 생성과 실제 통계표 해석
 - business_insight: 사용자가 명시적으로 요청한 종합 비즈니스 인사이트
 
-[데이터프레임 규칙]
-- df와 df_clean은 현재 메모리에 이미 존재합니다. 샘플 데이터를 만들거나 파일을 다시 읽지 마세요.
-- df는 업로드 원본이므로 수정하거나 재할당하지 마세요.
-- df_clean은 분석 및 전처리 작업본이며 사용자가 요청한 경우에만 수정하세요.
-- 조회 및 집계 결과는 result_df, summary_df 또는 df_result 같은 별도 변수에 저장하고 display()로 표시하세요.
-
-[일반 Python 요청 규칙]
-- 실제 조회, 필터링, 집계, 컬럼 생성·삭제, 값 수정, 결측치 처리, 형변환 또는 중복 제거 요청만 data로 분류하세요.
-- data 응답의 python_code에는 실행 가능한 Python 코드만 넣으세요. 코드 펜스, 설명, import, 파일 입출력, 네트워크 접근을 넣지 마세요.
-- 사용자가 df_clean 변경을 명시한 경우에만 modifies_df_clean을 true로 설정하세요.
-- 한글 폰트 설치 또는 설정 코드를 작성하지 마세요.
-- data 응답에는 하나의 실행 단위만 작성하고, 조회·집계 결과를 반드시 display()로 출력하세요.
+[데이터 안전 규칙]
+- Python, pandas, Matplotlib, Seaborn 코드 또는 실행 명령을 생성하지 마세요.
+- 데이터 수정 요청은 지원하지 않으며 전처리 화면을 사용하도록 안내하세요.
+- 설명과 분석에는 제공된 요약, 실제 계산 결과와 저장된 통계자료만 사용하세요.
 
 [차트 요청 규칙]
 - 차트 요청에는 Python, Matplotlib 또는 Seaborn 코드를 작성하지 말고 지원되는 chart_spec만 생성하세요.
@@ -126,8 +114,7 @@ INSIGHT_SYSTEM_PROMPT = """
 [최종 응답 점검]
 - 현재 사용자 요청에 명시된 답변 언어를 따랐는지 확인하세요.
 - 요청하지 않은 내용, 실제 계산하지 않은 숫자 또는 불필요한 코드를 포함하지 않았는지 확인하세요.
-- data 요청에서만 python_code를 작성하고 df를 수정하지 않았는지 확인하세요.
-- 사용자가 변경을 요청한 경우에만 modifies_df_clean을 true로 설정했는지 확인하세요.
+- Python 코드를 작성하거나 데이터를 수정하지 않았는지 확인하세요.
 - 차트 요청에는 Python 코드가 없고 지원되는 chart_spec만 있는지 확인하세요.
 - 지원되지 않는 기능을 임의 생성하거나 다른 기능으로 변경하지 않았는지 확인하세요.
 """.strip()
@@ -470,30 +457,6 @@ def execute_request(
                 message=InsightMessage(role="model", text=decision.answer.strip())
             )
         try:
-            if decision.action == "data":
-                before_shape = tuple(frame.shape)
-                code_result = execute_generated_code(
-                    decision.python_code,
-                    original_frame if original_frame is not None else frame,
-                    frame,
-                    allow_mutation=decision.modifies_df_clean,
-                )
-                code_record = InsightCodeRecord(
-                    code=decision.python_code.strip(),
-                    modifies_df_clean=decision.modifies_df_clean,
-                    outputs=code_result.outputs,
-                    before_shape=before_shape,
-                    after_shape=tuple(code_result.frame.shape),
-                )
-                return InsightExecution(
-                    message=InsightMessage(
-                        role="model",
-                        text="요청한 데이터 작업을 실행했습니다.",
-                        code=code_record,
-                    ),
-                    updated_frame=code_result.frame if decision.modifies_df_clean else None,
-                )
-
             spec = decision.chart_spec.to_chart_spec()
             chart_record, chart_source = rebuild_chart_record(
                 frame, spec, source_filename
@@ -517,7 +480,6 @@ def execute_request(
                 visualization_source=chart_source,
             )
         except (
-            InsightCodeError,
             ValidationError,
             VisualizationDataError,
             ValueError,

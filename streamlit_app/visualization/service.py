@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
-import re
 from dataclasses import dataclass
 
 import matplotlib
@@ -38,96 +37,6 @@ class VisualizationResult:
 def automatic_chart_title(*columns: str | None) -> str:
     selected = [column for column in columns if column and column not in {"(없음)"}]
     return " · ".join(dict.fromkeys(selected))
-
-
-def _default_columns(frame: pd.DataFrame) -> tuple[str, str | None]:
-    categorical = [str(c) for c in frame.columns if not pd.api.types.is_numeric_dtype(frame[c])]
-    numeric = [str(c) for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
-    x = categorical[0] if categorical else str(frame.columns[0])
-    y = numeric[0] if numeric else (str(frame.columns[1]) if frame.shape[1] > 1 else None)
-    return x, y
-
-
-def parse_text_request(text: str, frame: pd.DataFrame, chart_count: int) -> list[ChartSpec]:
-    """Convert bounded Korean/English chart requests to validated chart specs."""
-    request = (text or "").strip()
-    if not request:
-        raise ValueError("시각화 요청 내용을 입력하세요.")
-    parts = [part.strip() for part in re.split(r"[;\n]+", request) if part.strip()]
-    if not parts:
-        parts = [request]
-    default_x, default_y = _default_columns(frame)
-    specs = []
-    columns = sorted((str(c) for c in frame.columns), key=len, reverse=True)
-    for index in range(chart_count):
-        sentence = parts[min(index, len(parts) - 1)]
-        lowered = sentence.casefold()
-        if any(word in lowered for word in ["correlation", "상관 히트맵", "상관계수 행렬"]):
-            chart_type = ChartType.CORRELATION_HEATMAP
-        elif any(word in lowered for word in ["heatmap", "히트맵", "열지도"]):
-            chart_type = ChartType.HEATMAP
-        elif any(word in lowered for word in ["grouped bar", "그룹 막대"]):
-            chart_type = ChartType.GROUPED_BAR
-        elif any(word in lowered for word in ["stacked bar", "누적 막대"]):
-            chart_type = ChartType.STACKED_BAR
-        elif any(word in lowered for word in ["scatter plot", "산점도"]):
-            chart_type = ChartType.SCATTER_PLOT
-        elif any(word in lowered for word in ["bubble", "버블"]):
-            chart_type = ChartType.SCATTER_BUBBLE
-        elif any(word in lowered for word in ["histogram", "히스토그램", "분포"]):
-            chart_type = ChartType.HISTOGRAM
-        elif any(word in lowered for word in ["pie", "원형", "파이"]):
-            chart_type = ChartType.PIE
-        elif any(word in lowered for word in ["line", "선형", "추세"]):
-            chart_type = ChartType.LINE
-        else:
-            chart_type = ChartType.BAR
-        mentioned = [column for column in columns if column.casefold() in lowered]
-        mentioned.sort(key=lambda column: lowered.find(column.casefold()))
-        x = mentioned[0] if mentioned else default_x
-        y = mentioned[1] if len(mentioned) > 1 else default_y
-        aggregation = (
-            Aggregation.RATIO
-            if any(word in lowered for word in ["ratio", "비율", "%"])
-            else Aggregation.MEAN
-            if any(word in lowered for word in ["mean", "average", "평균"])
-            else Aggregation.SUM
-            if any(word in lowered for word in ["sum", "합계"])
-            else Aggregation.VALID_COUNT
-            if any(word in lowered for word in ["valid count", "유효값"])
-            else Aggregation.COUNT
-        )
-        value_column = None
-        if aggregation in {Aggregation.SUM, Aggregation.MEAN, Aggregation.VALID_COUNT}:
-            numeric_mentions = [c for c in mentioned if pd.api.types.is_numeric_dtype(frame[c])]
-            value_column = numeric_mentions[-1] if numeric_mentions else default_y
-        group = mentioned[2] if len(mentioned) > 2 else None
-        if chart_type == ChartType.BAR and any(word in lowered for word in ["grouped", "그룹"]):
-            bar_mode = "grouped"
-        elif chart_type == ChartType.BAR and any(word in lowered for word in ["100%", "100％"]):
-            bar_mode = "stacked_100"
-        elif chart_type == ChartType.BAR and any(word in lowered for word in ["stacked", "누적"]):
-            bar_mode = "stacked"
-        else:
-            bar_mode = "basic"
-        multi_types = {ChartType.CORRELATION_HEATMAP}
-        two_axis_types = {
-            ChartType.SCATTER_PLOT, ChartType.GROUPED_BAR, ChartType.STACKED_BAR,
-            ChartType.SCATTER_BUBBLE, ChartType.HEATMAP,
-        }
-        spec_data = {
-            "chart_type": chart_type,
-            "x": "" if chart_type in multi_types else x,
-            "y": y if chart_type in two_axis_types else None,
-            "variables": mentioned if chart_type in multi_types else [],
-            "group": group,
-            "value_column": value_column,
-            "aggregation": aggregation,
-            "title": sentence[:80],
-            "advanced": {"bar_mode": bar_mode},
-        }
-        specs.append(ChartSpec.model_validate(spec_data))
-    return specs
 
 
 def summarize_artifact(

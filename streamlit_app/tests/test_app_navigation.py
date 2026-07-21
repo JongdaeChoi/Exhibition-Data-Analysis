@@ -68,7 +68,7 @@ def test_heavy_sections_render_only_when_selected() -> None:
     assert app.chat_input and not app.chat_input[0].disabled
 
 
-def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
+def test_stage_switch_preserves_visualization_and_insight_history() -> None:
     app = _loaded_app()
     chart_record, _ = rebuild_chart_record(
         app.session_state.df_clean,
@@ -81,10 +81,7 @@ def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
 
     app.segmented_control[0].set_value("인사이트")
     app.run()
-    api_input = next(item for item in app.text_input if item.label.startswith("OpenAI API Key"))
-    api_input.input("sk-test-session-only")
-    app.run()
-    assert app.session_state.insight_api_keys["OpenAI"] == "sk-test-session-only"
+    assert not any("API Key" in item.label for item in app.text_input)
     assert any(button.label == "수정한 Pydantic 설정으로 차트 재실행" for button in app.button)
     editor = next(item for item in app.text_area if item.label == "ChartSpec JSON 직접 수정")
     edited_spec = json.loads(editor.value)
@@ -103,8 +100,8 @@ def test_stage_switch_preserves_visualization_result_and_api_key() -> None:
     app.run()
     app.segmented_control[0].set_value("인사이트")
     app.run()
-    api_input = next(item for item in app.text_input if item.label.startswith("OpenAI API Key"))
-    assert api_input.value == "sk-test-session-only"
+    assert app.session_state.insight_history
+    assert not any("API Key" in item.label for item in app.text_input)
 
     visualization_result = build_visualization(
         app.session_state.df_clean,
@@ -129,14 +126,19 @@ def test_local_upload_opens_fast_basic_stage() -> None:
         "text/csv",
     )
     app.run()
-    next(button for button in app.button if button.label == "로컬 파일 적재").click()
+    next(button for button in app.button if button.label == "새 업로드 파일 등록").click()
+    app.run()
+
+    next(radio for radio in app.radio if radio.label == "분석할 데이터").set_value("uploaded")
+    app.run()
+    next(button for button in app.button if button.label == "선택 데이터 분석").click()
     app.run()
 
     assert not app.exception
     assert app.segmented_control[0].value == "기본 현황"
     assert len(app.session_state.df) == 2
     assert app.session_state.df is not app.session_state.df_clean
-    assert "sample.csv 파일을 적재했습니다." in [message.value for message in app.success]
+    assert app.session_state.current_file_name == "sample.csv"
 
 
 def test_language_selection_localizes_all_workflow_stages() -> None:

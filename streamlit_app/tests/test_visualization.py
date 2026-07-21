@@ -11,7 +11,7 @@ from pydantic import ValidationError
 matplotlib.use("Agg")
 
 from visualization.models import ChartSpec, FigureSpec
-from visualization.service import automatic_chart_title, build_visualization, figure_to_bytes, parse_text_request, source_payload
+from visualization.service import automatic_chart_title, build_visualization, figure_to_bytes, source_payload
 from visualization.statistics import build_statistics, variable_type_table
 
 
@@ -218,13 +218,6 @@ def test_axes_visibility_and_data_label_style(sample_frame: pd.DataFrame) -> Non
     assert all(label.get_visible() is False for label in axis.get_xticklabels())
     assert axis.texts and axis.texts[0].get_fontweight() == "bold"
     assert axis.texts[0].get_alpha() == pytest.approx(0.5)
-
-
-def test_text_request_uses_variables_in_sentence_order(sample_frame: pd.DataFrame) -> None:
-    spec = parse_text_request("국가별 매출 합계 막대그래프", sample_frame, 1)[0]
-    assert spec.x == "국가"
-    assert spec.value_column == "매출"
-    assert spec.aggregation.value == "sum"
 
 
 def test_automatic_chart_title_uses_selected_variable_names_once() -> None:

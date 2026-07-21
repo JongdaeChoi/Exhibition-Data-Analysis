@@ -14,6 +14,26 @@ LANGUAGE_OPTIONS = ("한국어", "English")
 # Korean values unchanged prevents localization from changing analysis logic.
 EN: dict[str, str] = {
     "데이터 분석": "Data Analysis",
+    "데이터 설명·조회, 차트 또는 비즈니스 인사이트를 요청하세요.": "Ask for data explanations, queries, charts, or business insights.",
+    "저장된 기본 테스트 파일 또는 새 업로드 파일 하나를 선택하여 분석합니다.": "Select either the saved default test file or one newly uploaded file for analysis.",
+    "1. 데이터 파일과 기본 테스트 파일": "1. Data Files and Default Test File",
+    "새 업로드 파일 등록": "Register New Upload",
+    "새 파일은 현재 세션에만 등록되며 저장 버튼을 눌러야 기본 파일로 교체됩니다.": "New files remain in the current session and replace the default only when you click Save.",
+    "기본 테스트 파일 영구 저장": "Persistent Default Test File",
+    "#### 기본 테스트 파일 영구 저장": "#### Persistent Default Test File",
+    "Supabase Storage가 설정되지 않았습니다. 데이터 적재·전처리·시각화는 계속 사용할 수 있습니다.": "Supabase Storage is not configured. Data loading, preprocessing, and visualization remain available.",
+    "기본 테스트 파일은 개발자 소유의 비공개 Supabase Storage에 저장됩니다.": "The default test file is stored in developer-owned private Supabase Storage.",
+    "저장된 기본 테스트 파일": "Saved Default Test File",
+    "이번에 새로 업로드한 파일": "Newly Uploaded File",
+    "새 업로드 파일을 기본 테스트 파일로 저장·교체": "Save or Replace Default with New Upload",
+    "새 업로드 파일을 기본 테스트 파일로 저장/교체": "Save or Replace Default with New Upload",
+    "저장된 기본 테스트 파일 삭제": "Delete Saved Default Test File",
+    "분석할 데이터": "Data to Analyze",
+    "선택 데이터 분석": "Analyze Selected Data",
+    "현재 분석 중인 파일": "Current Analysis File",
+    "선택되지 않음": "Not Selected",
+    "없음": "None",
+    "구조화 메뉴에서 ChartSpec을 생성하고 Pydantic 검증 후 차트를 실행합니다.": "Create a ChartSpec with the structured menu, validate it with Pydantic, and then run the chart.",
     "CSV 또는 Excel 데이터를 불러와 원본과 분석용 데이터셋으로 안전하게 분리합니다.": "Load CSV or Excel data and safely separate the original and analysis datasets.",
     "1. 데이터 파일 선택": "1. Select Data File",
     "로컬 파일": "Local File",
@@ -21,10 +41,13 @@ EN: dict[str, str] = {
     "버튼을 누르면 운영체제의 파일 선택창이 열립니다.": "Click to open your operating system's file picker.",
     "로컬 파일 적재": "Load Local File",
     "Drive 파일 적재": "Load Drive File",
+    "Drive 파일을 새 업로드로 등록": "Register Drive File as New Upload",
     "Google Drive 공유 링크": "Google Drive Share Link",
     "파일명 (선택)": "Filename (optional)",
     "Drive 링크에서 파일명이 확인되지 않을 때 sample.csv처럼 입력": "Enter a name such as sample.csv if it cannot be detected from the Drive link",
+    "Drive 링크에서 확인되지 않을 때 sample.csv처럼 입력": "Enter a name such as sample.csv if it cannot be detected from the Drive link",
     "현재 단계에서는 '링크가 있는 모든 사용자'에게 공개된 Drive 파일을 지원합니다.": "This version supports Drive files shared with anyone who has the link.",
+    "'링크가 있는 모든 사용자'에게 공개된 Google Drive 파일만 지원합니다.": "Only Google Drive files shared with anyone who has the link are supported.",
     "2. 데이터 기본 현황": "2. Data Overview",
     "파일명": "Filename",
     "행": "Rows",
@@ -542,6 +565,7 @@ OPTION_EN = {key: EN[key] for key in _OPTION_KEYS if key in EN}
 PHRASES: tuple[tuple[str, str], ...] = tuple(
     sorted(
         {
+            "현재 분석 중인 파일:": "Current analysis file:",
             "범주형 변수의 수치 인덱스 매핑": "categorical variable numeric-index mapping",
             "통계자료와 요약 인사이트": "statistics and summary insight",
             "축 라벨과 눈금 스타일": "axis label and tick style",
@@ -566,7 +590,6 @@ PHRASES: tuple[tuple[str, str], ...] = tuple(
             "기준선 라벨 표시": "Show Reference-Line Label",
             "기준선 ": "Reference Line ",
             "주석 ": "Annotation ",
-            "API Key (선택)": "API Key (optional)",
             "API Key를 먼저 설정하세요. 입력한 질문은 실행되지 않았습니다.": "Set the API key first. The entered question was not submitted.",
             "모델이 요청 목적과 분석 근거를 확인하고 있습니다...": "model is reviewing the request intent and analytical evidence...",
             "전체 ": "Total ",
@@ -597,10 +620,8 @@ PHRASES: tuple[tuple[str, str], ...] = tuple(
             "행": " rows",
             "파일을 적재했습니다.": "file loaded.",
             "API 인증 준비 완료": "API authentication is ready",
-            "화면 입력": "manual entry",
             "환경변수": "environment variable",
             "모델이 요청 목적과 분석 근거를 확인하고 있습니다...": "model is reviewing the request intent and analytical evidence...",
-            "API Key (선택)": "API Key (optional)",
             "첨부": "Attachment",
             "기존 대화": "Existing conversation",
             "참고자료": "References",
@@ -688,6 +709,8 @@ def _translated_call(
             kwargs["label"] = translator(kwargs["label"])
         if isinstance(kwargs.get("help"), str):
             kwargs["help"] = translate(kwargs["help"])
+        if isinstance(kwargs.get("placeholder"), str):
+            kwargs["placeholder"] = translate(kwargs["placeholder"])
         if options:
             formatter = kwargs.get("format_func", str)
 
