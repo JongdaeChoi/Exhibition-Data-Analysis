@@ -56,16 +56,169 @@ def test_heavy_sections_render_only_when_selected() -> None:
     assert not app.exception
     assert "전처리" not in [header.value for header in app.header]
     assert "데이터 시각화" in [header.value for header in app.header]
+    markdown_values = {str(item.value) for item in app.markdown}
+    assert "#### 차트 1" in markdown_values
+    assert "#### 직접 설정·조회" in markdown_values
+    assert "## Subplot 1" not in markdown_values
+    assert "#### Subplot 구성" not in markdown_values
+    assert not any(
+        "구조화 메뉴에서 ChartSpec을 생성" in str(item.value)
+        for item in app.caption
+    )
     number_labels = {control.label for control in app.number_input}
     assert {"행 개수(n1)", "열 개수(n2)"}.issubset(number_labels)
     expander_labels = {expander.label for expander in app.expander}
-    assert {"레이아웃 설정", "차트·데이터 설정", "Subplot별 Axes 설정"}.issubset(expander_labels)
+    assert {
+        "레이아웃 설정", "차트·데이터 설정", "Subplot별 Axes 설정", "ChartSpec JSON"
+    }.issubset(expander_labels)
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    assert "Grouped Bar Chart" not in chart_type.options
+    assert "Stacked Bar Chart" not in chart_type.options
+    labels = [control.label for control in app.selectbox]
+    assert labels.index("컬럼 선택") < labels.index("세부그룹 선택") < labels.index("집계 방식")
+    assert "순위 기준" not in labels
+    assert next(control for control in app.selectbox if control.label == "X축 값 정렬").value == "ascending"
+    assert next(control for control in app.selectbox if control.label == "Y축 값 정렬").value == "ascending"
+    assert next(control for control in app.selectbox if control.label == "범위 기준").value == "all"
+    chart_alpha = next(control for control in app.slider if control.key == "viz_1_bar_chart_alpha")
+    assert chart_alpha.label == "투명도"
+    assert chart_alpha.value == 0.85
+    color_mode = next(control for control in app.radio if control.key == "viz_1_bar_chart_color_mode")
+    assert color_mode.label == "색상 방식"
+    assert color_mode.options == ["컬러맵", "HEX"]
+    checkbox_labels = [control.label for control in app.checkbox]
+    assert checkbox_labels.index("X-Y 축 전환") < checkbox_labels.index("값 표시")
+    assert not any("제목 및 표시" in str(item.value) for item in app.markdown)
+    assert {item.value for item in app.caption}.issuperset({"라벨", "눈금"})
+    title_visible = next(control for control in app.checkbox if control.key == "viz_1_title_visible")
+    assert title_visible.label == "표시"
+    title_visible.set_value(False)
+    app.run()
+    assert next(control for control in app.text_input if control.key == "viz_1_title").disabled
+    assert next(control for control in app.slider if control.key == "viz_1_title_size").disabled
+    assert next(control for control in app.selectbox if control.key == "viz_1_title_weight").disabled
+    x_label_visible = next(control for control in app.checkbox if control.key == "viz_1_x_label_visible")
+    x_label_visible.set_value(False)
+    app.run()
+    assert next(control for control in app.text_input if control.key == "viz_1_xlabel").disabled
+    assert next(control for control in app.slider if control.key == "viz_1_x_label_size").disabled
+    x_tick_visible = next(control for control in app.checkbox if control.key == "viz_1_x_tick_visible")
+    x_tick_visible.set_value(False)
+    app.run()
+    assert next(control for control in app.slider if control.key == "viz_1_x_tick_size").disabled
+
+    subgroup = next(control for control in app.selectbox if control.label == "세부그룹 선택")
+    subgroup.select("조사일자")
+    app.run()
+    bar_mode = next(control for control in app.radio if control.label == "막대 표시 방식")
+    assert bar_mode.options == ["그룹막대", "누적막대"]
+    subgroup_sort = next(
+        control for control in app.selectbox if control.label == "세부그룹(X2) 값 정렬"
+    )
+    assert subgroup_sort.value == "ascending"
 
     app.segmented_control[0].set_value("인사이트")
     app.run()
     assert not app.exception
     assert "Business Insight" in [header.value for header in app.header]
     assert app.chat_input and not app.chat_input[0].disabled
+
+
+def test_line_and_pie_use_simplified_data_controls() -> None:
+    app = _loaded_app()
+    app.segmented_control[0].set_value("시각화")
+    app.run()
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Line Chart")
+    app.run()
+    labels = [control.label for control in app.selectbox]
+    assert labels.index("컬럼 선택") < labels.index("세부그룹 선택") < labels.index("집계 방식")
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Pie Chart")
+    app.run()
+    labels = [control.label for control in app.selectbox]
+    assert labels.index("컬럼 선택") < labels.index("집계 방식")
+    aggregation = next(control for control in app.selectbox if control.label == "집계 방식")
+    assert aggregation.options == ["행 개수", "행 개수(결측치 제외)", "비율"]
+    assert "X2 집계 대상" not in labels
+    assert "값 기준 정렬" in labels
+    assert "범주 기준 정렬" in labels
+
+
+def test_histogram_and_scatter_use_chart_specific_controls() -> None:
+    app = _loaded_app()
+    app.segmented_control[0].set_value("시각화")
+    app.run()
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Histogram")
+    app.run()
+    x_sort = next(control for control in app.selectbox if control.label == "X축 값 정렬")
+    y_sort = next(control for control in app.selectbox if control.label == "Y축 값 정렬")
+    element_range = next(control for control in app.selectbox if control.label == "범위 기준")
+    top_n = next(control for control in app.number_input if control.label == "N 값")
+    assert not x_sort.disabled
+    assert y_sort.disabled and y_sort.value == "none"
+    assert element_range.disabled and element_range.value == "all"
+    assert top_n.disabled
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Scatter Plot")
+    app.run()
+    labels = {control.label for control in app.selectbox}
+    assert {"컬럼1", "컬럼2", "색상 컬럼"}.issubset(labels)
+    assert "X1 변수" not in labels
+    assert "X2 변수" not in labels
+    assert "그룹/색상 변수" not in labels
+    jitter_enabled = next(control for control in app.checkbox if control.label == "지터링 사용")
+    assert not jitter_enabled.value
+    assert not any(control.label == "지터링 너비" for control in app.slider)
+    jitter_enabled.set_value(True)
+    app.run()
+    assert any(control.label == "지터링 너비" for control in app.slider)
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Scatter Bubble")
+    app.run()
+    labels = [control.label for control in app.selectbox]
+    assert labels.index("컬럼1") < labels.index("컬럼2") < labels.index("집계대상") < labels.index("집계 방식")
+    assert "그룹/색상 변수" not in labels
+    assert "색상 컬럼" not in labels
+    assert "X3 집계 대상" not in labels
+    aggregation = next(control for control in app.selectbox if control.label == "집계 방식")
+    assert "행 개수(결측 제외)" in aggregation.options
+    assert "유효값 개수(결측 제외)" not in aggregation.options
+    bubble_size = next(control for control in app.slider if control.key == "viz_1_bubble_size")
+    color_mode = next(control for control in app.radio if control.key == "viz_1_scatter_bubble_chart_color_mode")
+    bubble_colormap = next(control for control in app.selectbox if control.key == "viz_1_scatter_bubble_chart_colormap")
+    bubble_hex = next(control for control in app.color_picker if control.key == "viz_1_scatter_bubble_chart_hex")
+    assert bubble_size.value == 80.0
+    assert color_mode.value == "hex"
+    assert bubble_colormap.disabled
+    assert not bubble_hex.disabled
+
+    color_mode.set_value("colormap")
+    app.run()
+    bubble_colormap = next(control for control in app.selectbox if control.key == "viz_1_scatter_bubble_chart_colormap")
+    bubble_hex = next(control for control in app.color_picker if control.key == "viz_1_scatter_bubble_chart_hex")
+    assert not bubble_colormap.disabled
+    assert bubble_hex.disabled
+
+    chart_type = next(control for control in app.selectbox if control.label == "차트 유형")
+    chart_type.select("Heatmap")
+    app.run()
+    labels = [control.label for control in app.selectbox]
+    assert labels.index("컬럼1") < labels.index("컬럼2") < labels.index("집계대상") < labels.index("집계 방식")
+    target = next(control for control in app.selectbox if control.label == "집계대상")
+    assert target.value == "(없음)"
+    aggregation = next(control for control in app.selectbox if control.label == "집계 방식")
+    assert "행 개수(결측 제외)" in aggregation.options
+    assert "색상 팔레트" not in labels
+    assert not any(control.label == "기본 색상" for control in app.color_picker)
+    assert any(control.key == "viz_1_heatmap_chart_colormap" and control.label == "컬러맵" for control in app.selectbox)
+    assert any(control.key == "viz_1_heatmap_chart_hex" and control.label == "HEX" for control in app.color_picker)
 
 
 def test_stage_switch_preserves_visualization_and_insight_history() -> None:

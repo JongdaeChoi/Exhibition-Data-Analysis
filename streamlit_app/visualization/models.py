@@ -89,7 +89,7 @@ class AdvancedSettings(BaseModel):
 
     x_sort: Literal["none", "ascending", "descending"] = "none"
     y_sort: Literal["none", "ascending", "descending"] = "none"
-    top_n: int | None = Field(default=20, ge=1, le=500)
+    top_n: int | None = Field(default=None, ge=1, le=500)
     include_missing: bool = False
     orientation: Literal["vertical", "horizontal"] = "vertical"
     bar_mode: Literal["basic", "grouped", "stacked", "stacked_100"] = "basic"
@@ -193,6 +193,8 @@ class AdvancedSettings(BaseModel):
     pie_min_ratio: float = Field(default=0.0, ge=0.0, le=30.0)
     pie_sort_by: Literal["none", "label", "value"] = "none"
     pie_sort_direction: Literal["ascending", "descending"] = "ascending"
+    pie_value_sort: Literal["none", "ascending", "descending"] = "none"
+    pie_category_sort: Literal["none", "ascending", "descending"] = "none"
     donut_hole_size: float = Field(default=0.5, ge=0.05, le=0.9)
     donut_ring_width: float = Field(default=0.4, ge=0.05, le=0.9)
     donut_center_color: str = "#FFFFFF"
@@ -201,6 +203,8 @@ class AdvancedSettings(BaseModel):
     donut_center_border_width: float = Field(default=1.0, ge=0.0, le=10.0)
     donut_center_border_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
     scatter_size: float = Field(default=80.0, ge=5.0, le=1000.0)
+    chart_color_mode: Literal["auto", "hex", "colormap"] = "auto"
+    scatter_color_mode: Literal["hex", "colormap"] | None = Field(default=None, exclude=True)
     trendline: bool = False
     heatmap_cmap: str = "Blues"
     heatmap_annotate: bool = True
@@ -226,7 +230,7 @@ class AdvancedSettings(BaseModel):
     grid_x: bool = False
     grid_y: bool = True
     grid_which: Literal["major", "minor", "both"] = "major"
-    element_range: Literal["all", "top", "bottom"] = "top"
+    element_range: Literal["all", "top", "bottom"] = "all"
     rank_basis: Literal["value", "ratio", "original"] = "value"
     remaining_items: Literal["exclude", "other"] = "exclude"
 

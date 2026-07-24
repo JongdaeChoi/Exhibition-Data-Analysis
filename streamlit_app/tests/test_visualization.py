@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 import matplotlib
+import numpy as np
 import pandas as pd
 import pytest
 from matplotlib.patches import Circle, Shadow, Wedge
@@ -55,6 +56,21 @@ def test_categorical_histogram_exposes_index_mapping(sample_frame: pd.DataFrame)
     assert int(table["값"].sum()) == 5
 
 
+def test_default_range_is_all_and_histogram_x_sort_controls_axis_direction() -> None:
+    default_spec = ChartSpec(chart_type="bar", x="범주")
+    assert default_spec.advanced.element_range == "all"
+    assert default_spec.advanced.top_n is None
+
+    frame = pd.DataFrame({"연속값": [1, 2, 3, 4, 5, 6]})
+    descending = ChartSpec(
+        chart_type="histogram",
+        x="연속값",
+        advanced={"x_sort": "descending", "histogram_bins": 3},
+    )
+    result = build_visualization(frame, [descending], FigureSpec(rows=1, columns=1))
+    assert result.figure.axes[0].xaxis_inverted()
+
+
 def test_all_chart_builders_and_exports(sample_frame: pd.DataFrame) -> None:
     specs = [
         ChartSpec(chart_type="bar", x="국가"),
@@ -90,6 +106,155 @@ def test_new_chart_statistics_and_ratio_bases(sample_frame: pd.DataFrame) -> Non
     scatter_table = build_statistics(sample_frame, scatter)
     assert len(scatter_table) == len(sample_frame)
     assert "행 번호" in scatter_table
+
+
+def test_scatter_sort_controls_order_categorical_ticks_and_numeric_axes() -> None:
+    categorical = pd.DataFrame(
+        {"가로": ["B", "A", "C"], "세로": ["x", "z", "y"]}
+    )
+    category_spec = ChartSpec(
+        chart_type="scatter_plot",
+        x="가로",
+        y="세로",
+        advanced={"x_sort": "ascending", "y_sort": "descending", "top_n": None},
+    )
+    category_table = build_statistics(categorical, category_spec)
+    mappings = category_table.attrs["category_mappings"]
+    assert mappings["가로"]["범주"].tolist() == ["A", "B", "C"]
+    assert mappings["세로"]["범주"].tolist() == ["z", "y", "x"]
+
+    numeric = pd.DataFrame({"가로": [1, 2, 3], "세로": [10, 20, 30]})
+    numeric_spec = ChartSpec(
+        chart_type="scatter_plot",
+        x="가로",
+        y="세로",
+        advanced={"x_sort": "descending", "y_sort": "descending", "top_n": None},
+    )
+    result = build_visualization(numeric, [numeric_spec], FigureSpec(rows=1, columns=1))
+    axis = result.figure.axes[0]
+    assert axis.xaxis_inverted()
+    assert axis.yaxis_inverted()
+
+    jittered_spec = ChartSpec(
+        chart_type="scatter_plot",
+        x="가로",
+        y="세로",
+        deep={"jitter": 0.2},
+    )
+    jittered_result = build_visualization(
+        numeric, [jittered_spec], FigureSpec(rows=1, columns=1)
+    )
+    offsets = np.asarray(jittered_result.figure.axes[0].collections[0].get_offsets())
+    assert not np.allclose(offsets[:, 0], numeric["가로"].to_numpy())
+    assert not np.allclose(offsets[:, 1], numeric["세로"].to_numpy())
+
+
+def test_bar_subgroup_replaces_grouped_and_stacked_chart_types(sample_frame: pd.DataFrame) -> None:
+    grouped = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        group="연도",
+        aggregation="ratio",
+        ratio_basis="within_x",
+        advanced={"bar_mode": "grouped", "top_n": None},
+    )
+    grouped_table = build_statistics(sample_frame, grouped)
+    assert set(grouped_table.columns) == {"국가", "연도", "값"}
+    assert grouped_table.groupby("국가")["값"].sum().round(6).eq(100).all()
+
+    stacked = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        group="연도",
+        aggregation="count",
+        advanced={"bar_mode": "stacked", "top_n": None},
+    )
+    result = build_visualization(sample_frame, [stacked], FigureSpec(rows=1, columns=1))
+    assert result.artifacts[0].spec.chart_type.value == "bar"
+    assert result.artifacts[0].spec.advanced.bar_mode == "stacked"
+    assert result.figure.axes[0].get_legend() is not None
+
+
+def test_scatter_bubble_uses_value_column_without_color_group(sample_frame: pd.DataFrame) -> None:
+    spec = ChartSpec(
+        chart_type="scatter_bubble",
+        x="국가",
+        y="연도",
+        value_column="매출",
+        aggregation="valid_count",
+        advanced={"element_range": "all", "top_n": None},
+    )
+    table = build_statistics(sample_frame, spec)
+    assert spec.group is None
+    assert set(table.columns) == {"국가", "연도", "값"}
+    expected_valid = sample_frame.loc[sample_frame["국가"].notna(), "매출"].notna().sum()
+    assert int(table["값"].sum()) == int(expected_valid)
+    result = build_visualization(sample_frame, [spec], FigureSpec(rows=1, columns=1))
+    assert result.figure.axes[0].get_legend() is None
+
+
+def test_chart_color_mode_applies_colormap_and_hex_across_renderers(sample_frame: pd.DataFrame) -> None:
+    bar = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        aggregation="count",
+        advanced={
+            "chart_color_mode": "colormap",
+            "palette": "viridis",
+            "alpha": 0.4,
+            "element_range": "all",
+            "top_n": None,
+        },
+    )
+    bar_result = build_visualization(sample_frame, [bar], FigureSpec())
+    bar_colors = [tuple(patch.get_facecolor()[:3]) for patch in bar_result.figure.axes[0].patches]
+    assert len(set(bar_colors)) > 1
+    assert all(patch.get_alpha() == pytest.approx(0.4) for patch in bar_result.figure.axes[0].patches)
+
+    scatter = ChartSpec(
+        chart_type="scatter_plot",
+        x="매출",
+        y="만족도",
+        advanced={"chart_color_mode": "colormap", "palette": "magma"},
+    )
+    scatter_result = build_visualization(sample_frame, [scatter], FigureSpec())
+    assert scatter_result.figure.axes[0].collections[0].get_array() is not None
+
+    bubble = ChartSpec(
+        chart_type="scatter_bubble",
+        x="연도",
+        y="만족도",
+        aggregation="count",
+        advanced={
+            "chart_color_mode": "colormap",
+            "palette": "viridis",
+            "scatter_size": 240.0,
+            "element_range": "all",
+            "top_n": None,
+        },
+    )
+    bubble_result = build_visualization(sample_frame, [bubble], FigureSpec())
+    bubble_collection = bubble_result.figure.axes[0].collections[0]
+    assert bubble_collection.get_array() is not None
+    assert float(np.max(bubble_collection.get_sizes())) == pytest.approx(240.0)
+
+    heatmap = ChartSpec(
+        chart_type="heatmap",
+        x="국가",
+        y="연도",
+        aggregation="count",
+        advanced={
+            "chart_color_mode": "hex",
+            "base_color": "#FF0000",
+            "alpha": 0.35,
+            "element_range": "all",
+            "top_n": None,
+        },
+    )
+    heatmap_result = build_visualization(sample_frame, [heatmap], FigureSpec())
+    heatmap_cmap = heatmap_result.figure.axes[0].collections[0].cmap
+    assert heatmap_cmap(1.0)[:3] == pytest.approx((1.0, 0.0, 0.0))
+    assert heatmap_result.figure.axes[0].collections[0].get_alpha() == pytest.approx(0.35)
 
 
 def test_multi_variable_and_correlation_heatmap(sample_frame: pd.DataFrame) -> None:
@@ -272,6 +437,16 @@ def test_axis_value_sorting_and_category_selection(sample_frame: pd.DataFrame) -
     sorted_table = build_statistics(sample_frame, sorted_spec)
     assert sorted_table["국가"].tolist() == ["미국", "일본", "한국"]
 
+    top_then_sorted = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        aggregation="sum",
+        value_column="매출",
+        advanced={"x_sort": "ascending", "element_range": "top", "top_n": 2},
+    )
+    top_then_sorted_table = build_statistics(sample_frame, top_then_sorted)
+    assert top_then_sorted_table["국가"].tolist() == ["미국", "한국"]
+
     selected_spec = ChartSpec(
         chart_type="bar",
         x="국가",
@@ -291,6 +466,50 @@ def test_grouped_bar_value_labels_line_curvature_and_numeric_axis(sample_frame: 
     )
     grouped_result = build_visualization(sample_frame, [grouped], FigureSpec(rows=1, columns=1))
     assert any(text.get_text() for text in grouped_result.figure.axes[0].texts)
+
+    descending_group = ChartSpec(
+        chart_type="bar",
+        x="국가",
+        group="연도",
+        advanced={
+            "bar_mode": "grouped",
+            "x_sort": "ascending",
+            "y_sort": "descending",
+            "top_n": None,
+        },
+    )
+    descending_result = build_visualization(
+        sample_frame, [descending_group], FigureSpec(rows=1, columns=1)
+    )
+    legend_labels = [
+        text.get_text() for text in descending_result.figure.axes[0].get_legend().texts
+    ]
+    assert legend_labels == ["2025", "2024"]
+
+    sparse_groups = pd.DataFrame(
+        {
+            "X1": [1, 1, 2, 2, 3, 4],
+            "X2": [5, 2, 1, 3, 4, 5],
+        }
+    )
+    ascending_group = ChartSpec(
+        chart_type="bar",
+        x="X1",
+        group="X2",
+        advanced={
+            "bar_mode": "grouped",
+            "x_sort": "ascending",
+            "y_sort": "ascending",
+            "top_n": None,
+        },
+    )
+    ascending_result = build_visualization(
+        sparse_groups, [ascending_group], FigureSpec(rows=1, columns=1)
+    )
+    ascending_legend = [
+        text.get_text() for text in ascending_result.figure.axes[0].get_legend().texts
+    ]
+    assert ascending_legend == ["1", "2", "3", "4", "5"]
 
     curved = ChartSpec(
         chart_type="line",
@@ -330,6 +549,28 @@ def test_donut_orders_slices_and_legend_by_label_or_value() -> None:
     result = build_visualization(frame, [by_label], FigureSpec(rows=1, columns=1))
     legend_labels = [text.get_text() for text in result.figure.axes[0].get_legend().texts]
     assert legend_labels == ["1", "2", "3", "4", "5"]
+
+
+def test_pie_value_sort_is_primary_and_category_sort_is_secondary() -> None:
+    frame = pd.DataFrame({"범주": ["B", "A", "D", "C", "B", "A", "D", "D", None]})
+    spec = ChartSpec(
+        chart_type="pie",
+        x="범주",
+        aggregation="valid_count",
+        value_column="범주",
+        advanced={
+            "pie_value_sort": "descending",
+            "pie_category_sort": "ascending",
+            "top_n": None,
+        },
+    )
+    table = build_statistics(frame, spec)
+    assert table["범주"].tolist() == ["D", "A", "B", "C"]
+    assert table["값"].tolist() == [3, 2, 2, 1]
+
+    result = build_visualization(frame, [spec], FigureSpec(rows=1, columns=1))
+    legend_labels = [text.get_text() for text in result.figure.axes[0].get_legend().texts]
+    assert legend_labels == ["D", "A", "B", "C"]
 
 
 def test_data_label_style_position_and_visibility(sample_frame: pd.DataFrame) -> None:

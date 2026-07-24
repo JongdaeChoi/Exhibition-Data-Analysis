@@ -118,8 +118,8 @@ def _aggregate(data: pd.DataFrame, keys: list[str], spec: ChartSpec) -> pd.DataF
     if spec.aggregation == Aggregation.RATIO:
         if spec.ratio_basis == "within_x" and spec.x in result and len(keys) > 1:
             denominator = result.groupby(spec.x, dropna=False)["값"].transform("sum")
-        elif spec.ratio_basis == "within_y" and spec.y and spec.y in result and len(keys) > 1:
-            denominator = result.groupby(spec.y, dropna=False)["값"].transform("sum")
+        elif spec.ratio_basis == "within_y" and (spec.y or spec.group) in result and len(keys) > 1:
+            denominator = result.groupby(spec.y or spec.group, dropna=False)["값"].transform("sum")
         else:
             denominator = float(result["값"].sum())
         result["값"] = np.where(np.asarray(denominator) != 0, result["값"] / denominator * 100, 0.0)
@@ -145,19 +145,6 @@ def _apply_category_orders(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame
 
 def _sort_and_limit(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
     result = table.copy()
-    targets = []
-    x_target = spec.x if spec.x in result else "구간 중심" if "구간 중심" in result else None
-    if spec.advanced.x_sort != "none" and x_target:
-        targets.append((x_target, spec.advanced.x_sort == "ascending"))
-    y_target = spec.y if spec.y and spec.y in result else "값"
-    if spec.advanced.y_sort != "none" and y_target in result and y_target != spec.x:
-        targets.append((y_target, spec.advanced.y_sort == "ascending"))
-    for column, ascending in reversed(targets):
-        try:
-            result = result.sort_values(column, ascending=ascending, kind="stable")
-        except TypeError:
-            order = result[column].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
-            result = result.loc[order]
     if spec.advanced.top_n and spec.advanced.element_range != "all":
         if spec.advanced.rank_basis in {"value", "ratio"} and "값" in result:
             result = result.sort_values(
@@ -171,6 +158,23 @@ def _sort_and_limit(table: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
             other = remaining.groupby(group_columns, dropna=False, observed=False, sort=False)["값"].sum().reset_index()
             selected = pd.concat([selected, other], ignore_index=True)
         result = selected
+    targets = []
+    x_target = spec.x if spec.x in result else "구간 중심" if "구간 중심" in result else None
+    if spec.advanced.x_sort != "none" and x_target:
+        targets.append((x_target, spec.advanced.x_sort == "ascending"))
+    y_target = (
+        spec.y if spec.y and spec.y in result
+        else spec.group if spec.group and spec.group in result
+        else "값"
+    )
+    if spec.advanced.y_sort != "none" and y_target in result and y_target != spec.x:
+        targets.append((y_target, spec.advanced.y_sort == "ascending"))
+    for column, ascending in reversed(targets):
+        try:
+            result = result.sort_values(column, ascending=ascending, kind="stable")
+        except TypeError:
+            order = result[column].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
+            result = result.loc[order]
     # Ranking selects the rows, but an explicit category order controls their
     # final display order. This prevents the default Top-N value ranking from
     # overriding a user-requested axis sequence.
@@ -206,12 +210,22 @@ def build_line_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
 
 def build_pie_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
     table = _apply_category_orders(_aggregate(_working_data(frame, spec), [spec.x], spec), spec)
-    ascending = spec.advanced.pie_sort_direction == "ascending"
-    if spec.advanced.pie_sort_by == "label":
-        order = table[spec.x].astype(str).str.casefold().sort_values(ascending=ascending, kind="stable").index
-        table = table.loc[order]
-    elif spec.advanced.pie_sort_by == "value":
-        table = table.sort_values("값", ascending=ascending, kind="stable")
+    uses_new_sort = (
+        spec.advanced.pie_value_sort != "none"
+        or spec.advanced.pie_category_sort != "none"
+    )
+    if not uses_new_sort:
+        ascending = spec.advanced.pie_sort_direction == "ascending"
+        if spec.advanced.pie_sort_by == "label":
+            try:
+                table = table.sort_values(spec.x, ascending=ascending, kind="stable")
+            except TypeError:
+                order = table[spec.x].astype(str).str.casefold().sort_values(
+                    ascending=ascending, kind="stable"
+                ).index
+                table = table.loc[order]
+        elif spec.advanced.pie_sort_by == "value":
+            table = table.sort_values("값", ascending=ascending, kind="stable")
     if spec.advanced.top_n and spec.advanced.element_range != "all":
         if spec.advanced.rank_basis in {"value", "ratio"}:
             table = table.sort_values(
@@ -234,7 +248,23 @@ def build_pie_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
                 [table.loc[~small], pd.DataFrame({spec.x: ["기타"], "값": [table.loc[small, "값"].sum()]})],
                 ignore_index=True,
             )
-    return table
+    if uses_new_sort:
+        category_sort = spec.advanced.pie_category_sort
+        if category_sort != "none":
+            category_ascending = category_sort == "ascending"
+            try:
+                table = table.sort_values(spec.x, ascending=category_ascending, kind="stable")
+            except TypeError:
+                order = table[spec.x].astype(str).str.casefold().sort_values(
+                    ascending=category_ascending, kind="stable"
+                ).index
+                table = table.loc[order]
+        value_sort = spec.advanced.pie_value_sort
+        if value_sort != "none":
+            table = table.sort_values(
+                "값", ascending=value_sort == "ascending", kind="stable"
+            )
+    return table.reset_index(drop=True)
 
 
 def build_histogram_statistics(frame: pd.DataFrame, spec: ChartSpec) -> pd.DataFrame:
@@ -279,7 +309,19 @@ def _convert_axes(table: pd.DataFrame, columns: list[str], spec: ChartSpec) -> d
         elif not pd.api.types.is_numeric_dtype(table[column]):
             requested = spec.category_orders.get(column, [])
             observed = list(dict.fromkeys(table[column].astype(str).tolist()))
-            categories = requested + [value for value in observed if value not in requested]
+            if requested:
+                categories = requested + [value for value in observed if value not in requested]
+            else:
+                sort_mode = (
+                    spec.advanced.x_sort if column == spec.x else spec.advanced.y_sort
+                )
+                categories = observed
+                if sort_mode != "none":
+                    categories = sorted(
+                        observed,
+                        key=str.casefold,
+                        reverse=sort_mode == "descending",
+                    )
             categorical = pd.Categorical(table[column].astype(str), categories=categories, ordered=True)
             mappings[column] = pd.DataFrame({"범주": categories, "수치 인덱스": range(len(categories))})
             table[column] = categorical.codes.astype(float)

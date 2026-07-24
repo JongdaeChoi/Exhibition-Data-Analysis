@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
-from matplotlib.colors import to_rgba
+from matplotlib.colors import LinearSegmentedColormap, to_rgba
 from matplotlib.container import BarContainer
 from matplotlib.dates import DateConverter, DateFormatter, DayLocator, MonthLocator, WeekdayLocator, YearLocator, date2num
 from matplotlib.patches import Circle, Shadow
@@ -22,6 +22,29 @@ def _palette(name: str, count: int) -> list:
         return list(sns.color_palette(name, max(count, 1)))
     except ValueError:
         return list(sns.color_palette("viridis", max(count, 1)))
+
+
+def _chart_color_mode(spec: ChartSpec, default: str) -> str:
+    mode = spec.advanced.chart_color_mode
+    if mode != "auto":
+        return mode
+    if spec.advanced.scatter_color_mode is not None:
+        return spec.advanced.scatter_color_mode
+    return default
+
+
+def _chart_colors(spec: ChartSpec, count: int, default: str) -> list:
+    if _chart_color_mode(spec, default) == "hex":
+        return [spec.advanced.base_color] * max(count, 1)
+    return _palette(spec.advanced.palette, count)
+
+
+def _heatmap_colormap(spec: ChartSpec):
+    if _chart_color_mode(spec, "colormap") == "hex":
+        return LinearSegmentedColormap.from_list(
+            "user_hex_colormap", ["#FFFFFF", spec.advanced.base_color]
+        )
+    return spec.advanced.heatmap_cmap
 
 
 def _legend_kwargs(spec: ChartSpec) -> dict:
@@ -351,7 +374,32 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     horizontal = (spec.advanced.orientation == "horizontal") ^ spec.x_y_swap
     if group:
         pivot = table.pivot_table(index=spec.x, columns=group, values="값", aggfunc="sum", fill_value=0, sort=False)
-        colors = _palette(spec.advanced.palette, pivot.shape[1])
+        requested_group_order = spec.category_orders.get(group, [])
+        if requested_group_order:
+            columns_by_text = {str(column): column for column in pivot.columns}
+            ordered_columns = [
+                columns_by_text[value]
+                for value in requested_group_order
+                if value in columns_by_text
+            ]
+            ordered_columns.extend(
+                column for column in pivot.columns if column not in ordered_columns
+            )
+            pivot = pivot.reindex(columns=ordered_columns)
+        elif spec.advanced.y_sort != "none":
+            try:
+                ordered_columns = sorted(
+                    pivot.columns,
+                    reverse=spec.advanced.y_sort == "descending",
+                )
+            except TypeError:
+                ordered_columns = sorted(
+                    pivot.columns,
+                    key=lambda value: str(value).casefold(),
+                    reverse=spec.advanced.y_sort == "descending",
+                )
+            pivot = pivot.reindex(columns=ordered_columns)
+        colors = _chart_colors(spec, pivot.shape[1], "colormap")
         pivot.plot(
             kind="barh" if horizontal else "bar",
             stacked=spec.advanced.bar_mode in {"stacked", "stacked_100"},
@@ -369,10 +417,11 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     else:
         labels = table[spec.x].astype(str)
         values = table["값"].to_numpy()
+        colors = _chart_colors(spec, len(table), "hex")
         if horizontal:
-            bars = ax.barh(labels, values, height=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
+            bars = ax.barh(labels, values, height=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=colors, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
         else:
-            bars = ax.bar(labels, values, width=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
+            bars = ax.bar(labels, values, width=spec.advanced.bar_width * (1.0 - spec.advanced.bar_gap), color=colors, alpha=spec.advanced.alpha, edgecolor=spec.advanced.edge_color, linewidth=spec.advanced.edge_width)
         if spec.show_values:
             _label_bar_containers(ax, [bars], spec, horizontal)
     _apply_common(ax, spec)
@@ -387,7 +436,10 @@ def render_bar(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
 
 def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     groups = table.groupby(spec.group, dropna=False) if spec.group else [(None, table)]
-    colors = _palette(spec.advanced.palette, table[spec.group].nunique() if spec.group else 1)
+    colors = _chart_colors(
+        spec, table[spec.group].nunique() if spec.group else 1,
+        "colormap" if spec.group else "hex",
+    )
     categorical_labels = None
     if spec.advanced.line_curvature > 0 and not pd.api.types.is_numeric_dtype(table[spec.x]):
         categorical_labels = list(dict.fromkeys(table[spec.x].astype(str).tolist()))
@@ -403,7 +455,7 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
             if parsed_x.notna().all():
                 x_values = parsed_x
         y_values = part["값"].to_numpy()
-        line_color = color if spec.group else spec.advanced.base_color
+        line_color = color
         if spec.advanced.line_curvature > 0:
             x_plot = (
                 np.asarray([category_positions[str(value)] for value in x_values], dtype=float)
@@ -482,7 +534,10 @@ def render_line(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
 def render_pie(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     values = table["값"].to_numpy()
     labels = table[spec.x].astype(str).tolist()
-    colors = [to_rgba(color, spec.advanced.alpha) for color in _palette(spec.advanced.palette, len(table))]
+    colors = [
+        to_rgba(color, spec.advanced.alpha)
+        for color in _chart_colors(spec, len(table), "colormap")
+    ]
     outer_radius = 1.0
     wedgeprops = {
         "edgecolor": to_rgba(spec.advanced.edge_color, spec.advanced.pie_edge_alpha),
@@ -582,7 +637,7 @@ def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         table["구간 중심"],
         table["값"],
         width=widths * 0.92,
-        color=spec.advanced.base_color,
+        color=_chart_colors(spec, len(table), "hex"),
         alpha=spec.advanced.alpha,
         edgecolor=spec.advanced.edge_color,
         linewidth=spec.advanced.edge_width,
@@ -601,6 +656,10 @@ def render_histogram(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         )
         ax.axvline(median, color="#7C3AED", linestyle=":", label="중앙값")
     _apply_common(ax, spec)
+    if spec.advanced.x_sort == "descending" and not ax.xaxis_inverted():
+        ax.invert_xaxis()
+    elif spec.advanced.x_sort == "ascending" and ax.xaxis_inverted():
+        ax.invert_xaxis()
     if (spec.deep.show_mean or spec.deep.show_median) and spec.advanced.legend:
         ax.legend(fontsize=8)
 
@@ -620,12 +679,21 @@ def render_scatter_bubble(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> Non
         rng = np.random.default_rng(42)
         x = x + rng.normal(0, spec.deep.jitter, len(x))
         y = y + rng.normal(0, spec.deep.jitter, len(y))
-    if spec.group and spec.group in table:
+    color_mode = _chart_color_mode(
+        spec, "colormap" if spec.group and spec.group in table else "hex"
+    )
+    if spec.group and spec.group in table and color_mode == "colormap":
         codes, uniques = pd.factorize(table[spec.group].astype(str))
         scatter = ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, c=codes, cmap=spec.advanced.palette, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
         if spec.advanced.legend:
             handles = [plt.Line2D([], [], marker="o", linestyle="", color=scatter.cmap(scatter.norm(i)), label=name) for i, name in enumerate(uniques)]
             ax.legend(handles=handles, fontsize=8, **_legend_kwargs(spec))
+    elif color_mode == "colormap":
+        ax.scatter(
+            x, y, s=sizes, marker=spec.advanced.scatter_marker,
+            c=size_values, cmap=spec.advanced.palette, alpha=spec.advanced.alpha,
+            edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width,
+        )
     else:
         ax.scatter(x, y, s=sizes, marker=spec.advanced.scatter_marker, color=spec.advanced.base_color, alpha=spec.advanced.alpha, edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width)
     valid = x.notna() & y.notna()
@@ -655,10 +723,11 @@ def render_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
     sns.heatmap(
         matrix,
         ax=ax,
-        cmap=spec.advanced.heatmap_cmap,
+        cmap=_heatmap_colormap(spec),
         annot=spec.advanced.heatmap_annotate,
         fmt=spec.advanced.heatmap_value_format,
         cbar=spec.advanced.heatmap_colorbar,
+        alpha=spec.advanced.alpha,
         linewidths=spec.advanced.heatmap_linewidth,
         linecolor=to_rgba(spec.advanced.heatmap_linecolor, spec.advanced.heatmap_linealpha),
         center=spec.deep.heatmap_center,
@@ -678,11 +747,18 @@ def render_scatter_plot(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         rng = np.random.default_rng(42)
         x = x + rng.normal(0, spec.deep.jitter, len(x))
         y = y + rng.normal(0, spec.deep.jitter, len(y))
-    ax.scatter(
-        x, y, s=spec.advanced.scatter_size, marker=spec.advanced.scatter_marker,
-        color=spec.advanced.base_color, alpha=spec.advanced.alpha,
-        edgecolors=spec.advanced.edge_color, linewidths=spec.advanced.edge_width,
-    )
+    scatter_kwargs = {
+        "s": spec.advanced.scatter_size,
+        "marker": spec.advanced.scatter_marker,
+        "alpha": spec.advanced.alpha,
+        "edgecolors": spec.advanced.edge_color,
+        "linewidths": spec.advanced.edge_width,
+    }
+    if _chart_color_mode(spec, "hex") == "colormap":
+        scatter_kwargs.update({"c": y, "cmap": spec.advanced.palette})
+    else:
+        scatter_kwargs["color"] = spec.advanced.base_color
+    ax.scatter(x, y, **scatter_kwargs)
     valid = x.notna() & y.notna()
     if spec.advanced.trendline and valid.sum() >= 2:
         coefficients = np.polyfit(x[valid], y[valid], 1)
@@ -697,6 +773,18 @@ def render_scatter_plot(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -> None:
         mapping = mappings[display_y]
         ax.set_yticks(mapping["수치 인덱스"], mapping["범주"].astype(str))
     _apply_common(ax, spec)
+    x_sort = spec.advanced.y_sort if spec.x_y_swap else spec.advanced.x_sort
+    y_sort = spec.advanced.x_sort if spec.x_y_swap else spec.advanced.y_sort
+    if display_x not in mappings:
+        if x_sort == "descending" and not ax.xaxis_inverted():
+            ax.invert_xaxis()
+        elif x_sort == "ascending" and ax.xaxis_inverted():
+            ax.invert_xaxis()
+    if display_y not in mappings:
+        if y_sort == "descending" and not ax.yaxis_inverted():
+            ax.invert_yaxis()
+        elif y_sort == "ascending" and ax.yaxis_inverted():
+            ax.invert_yaxis()
     if spec.x_y_swap:
         ax.set_xlabel(spec.y_label or spec.y)
         ax.set_ylabel(spec.x_label or spec.x)
@@ -724,8 +812,9 @@ def render_correlation_heatmap(ax: Axes, table: pd.DataFrame, spec: ChartSpec) -
         matrix = table.pivot(index="변수1", columns="변수2", values="값")
     sns.heatmap(
         matrix, ax=ax, vmin=-1, vmax=1, center=0,
-        cmap=spec.advanced.heatmap_cmap, annot=spec.advanced.heatmap_annotate,
+        cmap=_heatmap_colormap(spec), annot=spec.advanced.heatmap_annotate,
         fmt=spec.advanced.heatmap_value_format, cbar=spec.advanced.heatmap_colorbar,
+        alpha=spec.advanced.alpha,
         linewidths=spec.advanced.heatmap_linewidth,
         linecolor=to_rgba(spec.advanced.heatmap_linecolor, spec.advanced.heatmap_linealpha),
     )
